@@ -25,7 +25,15 @@ are available in the public archive. The cleanest version of the answer is
 "yes/no, with these conditional caveats" and it's defensible without ever
 opening a book.
 
-Where L2 would actually matter is in two specific parts of the project:
+An important note: "For each symbol，only the largest one liquidation order
+within 1000ms will be pushed as the snapshot." This will systematically 
+underestimate liquidation volume.
+
+## Data
+
+BTC
+
+Where L2 data would actually matter is in two specific parts of the project:
 
 1. **Execution modeling** for the backtest entry. When you buy a wick, what
 slippage do you face? At small size (say <$50k notional on BTCUSDT), bookTicker
