@@ -30,8 +30,36 @@ within 1000ms will be pushed as the snapshot." This will systematically
 underestimate liquidation volume.
 
 ## Data
+COIN-M BTCUSD perp
+Required:
+[x] liquidationSnapshot
+[x] aggTrades
+  - gives directional aggressor flow -- if one order sweeps through multiple
+    price levels, aggTrades reports this into one row
+[x] bookTicker
+Not for the main research question:
+[ ] open interest
+   - this is the `metrics` dataset
+   - freq: 5min
+   - do i need? aggTrades contains a measure of volume
 
-BTC
+Study period:
+Start: 2023-06-25 04:53:20.357000+00:00
+End:   2024-10-14 05:27:11.079000+00:00
+
+For your project, aggTrades plays three distinct roles:
+
+Detecting aggressive flow. Cluster analysis of is_buyer_maker direction within
+short windows to identify periods of one-sided taker pressure, separate from
+explicit liquidation events.  Measuring realized post-event volume. After a
+liquidation cascade, how much follow-on taker flow appears? Does it continue in
+the same direction (continuation) or reverse (immediate fade by counterparties)?
+Building execution models. When you simulate fading a cascade, the slippage
+you'd face is bounded by the actual aggTrades volume you'd be competing against.
+If you'd be 5% of the typical aggTrades volume in the post-event window, your
+impact is small; if you'd be 50%, your impact is large and your strategy isn't
+capacity-feasible.
+
 
 Where L2 data would actually matter is in two specific parts of the project:
 
