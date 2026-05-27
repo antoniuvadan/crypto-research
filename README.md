@@ -3,31 +3,27 @@
 ## Research question: Liquidation cascade reversal
 
 The research question is "do liquidation cascades exhibit mean reversion at
-horizon H?". To answer that, we need (a) liquidation events, (b) price series at
-horizon H, (c) some null/baseline distribution to compare against. All of these
-are available in the public archive. The cleanest version of the answer is
-"yes/no, with these conditional caveats" and it's defensible without ever
-opening a book.
+horizon H?".
 
-An important note: "For each symbol，only the largest one liquidation order
+Additional directions:
+1. Condition on volatility regime
+2. Can volatility regime alone explain mean-reversion (if it exists). We want
+to discern between high-vol mean reversion and liquidation cascades to be able
+to tell what the source of alpha is if this is used as a downstream signal.
+
+An important note about the data: "For each symbol，only the largest one liquidation order
 within 1000ms will be pushed as the snapshot." This will systematically 
 underestimate liquidation volume.
 
 ## Data
-Limiting scope to COIN-M BTCUSD perps.
+Limiting scope to COIN-M BTCUSD perps (USD-denominated, BTC-settled BTC perpetuals).
 
-Required:
+Data required:
 - [x] liquidationSnapshot
 - [x] aggTrades
   - gives directional aggressor flow -- if one order sweeps through multiple
     price levels, aggTrades reports this into one row
 - [x] bookTicker
-
-Not for the main research question:
-- [ ] open interest
-   - this is the `metrics` dataset
-   - freq: 5min
-   - do i need? aggTrades contains a measure of volume
 
 Study period:
 Start: `2023-06-25 04:53:20.357000+00:00`
