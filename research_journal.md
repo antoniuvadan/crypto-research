@@ -7,6 +7,25 @@
 
 TODO:
 - [ ] realized vol for regime analysis
+  - use volatility of log returns, not price; log returns are additive,
+    more symmetric and closer to Gaussian, which is exactly where std dev is 
+    more interpretable
+  - on sampling frequency: using every sample from L1 data is too noisy. Compute
+    mid and sample 1 per second
+  - window:
+    - 5s, 30s, 1min, 5min
+      - 5s: is something unusual happening right now
+      - 30s: is something unusual happening this minute
+      - 1min and 5min get closer to volatility regime change
+    - must match each volatility window to an adequate sampling frequency
+      - 5s: 100ms
+      - 30s: 250ms
+      - 1min: 500ms
+      - 5min: 2s
+  - bipower variation?
+  - could aim to answer "do liquidations lead or lag vol regime changes?"
+  - compute volatility across 5s, 30s, 1min, 5min windows 
+    **per liquidation event**
 - [ ] aggregate taker flow vs. liquidation events visualization.
   - For a few visually striking days (highest liquidation count days), plot:
     - Per-minute net taker flow from aggTrades (signed by direction)
