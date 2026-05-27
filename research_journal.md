@@ -3,9 +3,9 @@
 - About quant research, generally:
   - Branches you should climb (because they directly inform the trunk):
     - What's the right event definition (size threshold, aggTrades-confirmed cascades, etc.)?
-    - What's the time horizon of reversion if it exists?
-    - How does the signal vary by vol regime? (This is my current branch)
-    - How does the signal vary by liquidation magnitude?
+    - **What's the time horizon of reversion if it exists?**
+    - **How does the signal vary by vol regime?**
+    - **How does the signal vary by liquidation magnitude?**
     - How is realized vol related to liquidation frequency, and what does the lead-lag tell us about mechanism?
 - Branches to note but not to climb (yet):
   - Is there alpha in cross-exchange basis dynamics during cascades?
@@ -20,6 +20,8 @@
 
 TODO:
 - [ ] realized vol for regime analysis
+  - [ ] liquidation rate per volatility regime
+    - vol regime = decile of volatility at the minute level
   - use volatility of log returns, not price; log returns are additive,
     more symmetric and closer to Gaussian, which is exactly where std dev is 
     more interpretable
@@ -32,7 +34,7 @@ TODO:
       - 1min and 5min get closer to volatility regime change
     - must match each volatility window to an adequate sampling frequency
       - 5s: 100ms
-      - 30s: 250ms
+      - 30s: 300ms
       - 1min: 500ms
       - 5min: 2s
   - bipower variation?
