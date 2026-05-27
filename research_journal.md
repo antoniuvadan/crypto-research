@@ -1,4 +1,17 @@
 # Tuesday May 26, 2026
+
+- About quant research, generally:
+  - Branches you should climb (because they directly inform the trunk):
+    - What's the right event definition (size threshold, aggTrades-confirmed cascades, etc.)?
+    - What's the time horizon of reversion if it exists?
+    - How does the signal vary by vol regime? (This is my current branch)
+    - How does the signal vary by liquidation magnitude?
+    - How is realized vol related to liquidation frequency, and what does the lead-lag tell us about mechanism?
+- Branches to note but not to climb (yet):
+  - Is there alpha in cross-exchange basis dynamics during cascades?
+  - Do similar dynamics exist on COIN-M altcoin perps?
+  - What's the relationship between liquidations and spot ETF flow?
+
 - found period of very high spread starting 2023-07-13 21:09:54.146 UTC
 
 - use `accumulated_fill_quantity` in the liquidation snapshot data to get
