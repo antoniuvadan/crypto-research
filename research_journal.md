@@ -1,6 +1,17 @@
+# Friday May 29, 2026
+
+- Plot realized vol at the following configs against liquidation events:
+```    
+    ("5s",   5,   0.1),   # 5s window,   100ms sampling
+    ("30s",  30,  0.3),   # 30s window,  300ms sampling
+    ("1min", 60,  0.5),   # 1min window, 500ms sampling
+    ("5min", 300, 2.0),   # 5min window, 2s sampling
+```
+
+
 # Tuesday May 26, 2026
 
-- About quant research, generally:
+- About the research process for this problem:
   - Branches you should climb (because they directly inform the trunk):
     - What's the right event definition (size threshold, aggTrades-confirmed cascades, etc.)?
     - **What's the time horizon of reversion if it exists?**
