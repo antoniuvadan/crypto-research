@@ -1,5 +1,11 @@
 # Friday May 29, 2026
 
+TODO:
+- [ ] cluster liquidations + aggTrades around liquidation clusters
+- [ ] EDA: plot signed returns around liquidation events
+
+
+
 - Plot realized vol at the following configs against liquidation events:
 ```    
     ("5s",   5,   0.1),   # 5s window,   100ms sampling
@@ -7,6 +13,8 @@
     ("1min", 60,  0.5),   # 1min window, 500ms sampling
     ("5min", 300, 2.0),   # 5min window, 2s sampling
 ```
+  - found what's expected -- higher volatility around liquidations. This was
+  expected to be true by construction of what constitutes a liquidation event.
 
 
 # Tuesday May 26, 2026
@@ -30,7 +38,7 @@
   - use `average_price` for the average underlying price of BTC
 
 TODO:
-- [ ] realized vol for regime analysis
+- [x] realized vol
   - [ ] liquidation rate per volatility regime
     - vol regime = decile of volatility at the minute level
   - use volatility of log returns, not price; log returns are additive,
