@@ -1,10 +1,13 @@
 # Friday May 29, 2026
 
+- Graphed price and liquidations around the liquidation with maximum volume in
+the [-5s, 5s] window. Found that around this particular selloff / liquidation 
+the price mean reverts at much higher frequencies (1-2min) because, at larger
+time horizons, the price continues to move downward
+
 TODO:
 - [ ] cluster liquidations + aggTrades around liquidation clusters
 - [ ] EDA: plot signed returns around liquidation events
-
-
 
 - Plot realized vol at the following configs against liquidation events:
 ```    
