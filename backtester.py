@@ -18,6 +18,11 @@ CONTRACT_NOTIONAL_USD = 100.0
 MAKER_FEE_RATE = 0.0002
 TAKER_FEE_RATE = 0.0005
 ROUND_TRIP_TAKER_FEE_RATE = TAKER_FEE_RATE * 2.0
+DEFAULT_LATENCY = timedelta(milliseconds=300)
+DEFAULT_TRADE_NOTIONAL_USD = 50_000.0
+DEFAULT_TRADE_NOTIONAL_USD_GRID = (50_000.0, 100_000.0)
+DEFAULT_MODEL_C_SUMMARY_PATH = Path("liquidation_momentum_model_c_summary.csv")
+DEFAULT_MODEL_C_TRADES_PATH = Path("liquidation_momentum_model_c_trades.csv")
 
 LIQ_SNAP_COLS = [
     "time_datetime",
@@ -757,6 +762,422 @@ def _format_timedelta(value: timedelta) -> str:
     return f"{total_seconds}s"
 
 
+@dataclass(frozen=True)
+class SweepExecution:
+    requested_quantity: float
+    filled_quantity: float
+    avg_price: float | None
+    start_time: datetime
+    end_time: datetime | None
+    is_complete: bool
+
+
+def run_liquidation_momentum_model_c_backtests(
+    liq_snap: pl.LazyFrame | pl.DataFrame,
+    agg_trades: pl.LazyFrame | pl.DataFrame,
+    holding_periods: tuple[timedelta, ...] = (
+        timedelta(seconds=5),
+        timedelta(seconds=10),
+        timedelta(seconds=30),
+        timedelta(minutes=1),
+        timedelta(minutes=2),
+    ),
+    initial_cash: float = 1_000_000.0,
+    trade_notional_usd: float = DEFAULT_TRADE_NOTIONAL_USD,
+    latency: timedelta = DEFAULT_LATENCY,
+    fee_rate: float = TAKER_FEE_RATE,
+    contract_notional_usd: float = CONTRACT_NOTIONAL_USD,
+    summary_csv_path: Path | None = DEFAULT_MODEL_C_SUMMARY_PATH,
+    trades_csv_path: Path | None = DEFAULT_MODEL_C_TRADES_PATH,
+    show_progress: bool = False,
+) -> dict[str, pl.DataFrame]:
+    """
+    Model C execution: latency, then sweep through same-side aggTrades for entry and exit.
+
+    Trade size is explicit notional. Contracts = trade_notional_usd / contract_notional_usd.
+    """
+
+    label = "model-c"
+    _progress_message(label if show_progress else None, "collecting aggregate trades")
+    trades_df = agg_trades.collect() if isinstance(agg_trades, pl.LazyFrame) else agg_trades
+    trades_df = trades_df.sort("transact_time_datetime")
+    _progress_message(label if show_progress else None, f"loaded {len(trades_df):,} trades")
+
+    events = LiquidationMomentumStrategy._build_signal_events(
+        liq_snap=liq_snap,
+        agg_trades=trades_df,
+        percentile=0.98,
+        trailing_window=timedelta(days=7),
+        seconds_before=5,
+        seconds_after=5,
+        aggregate_quantity_col="agg_qty_5s_before_5s_after",
+        progress_label=label if show_progress else None,
+    )
+
+    trade_times_ns = trades_df["transact_time_datetime"].cast(pl.Int64).to_numpy()
+    trade_times = trades_df["transact_time_datetime"].to_list()
+    prices = trades_df["price"].to_numpy()
+    quantities = trades_df["quantity"].to_numpy()
+    is_buyer_maker = trades_df["is_buyer_maker"].to_numpy()
+
+    target_contracts = trade_notional_usd / contract_notional_usd
+    summary_rows: list[dict[str, float | str]] = []
+    trade_rows: list[dict[str, float | str | bool | None]] = []
+    total_periods = len(holding_periods)
+
+    for period_idx, holding_period in enumerate(holding_periods, start=1):
+        holding_label = _format_timedelta(holding_period)
+        progress = (
+            ProgressPrinter(
+                label=f"{period_idx}/{total_periods} {holding_label} model-c events",
+                total=len(events),
+                update_every=500,
+            )
+            if show_progress
+            else None
+        )
+        _progress_message(
+            label if show_progress else None,
+            f"running holding period {period_idx}/{total_periods}: {holding_label}",
+        )
+
+        pnl_values: list[float] = []
+        gross_pnl_values: list[float] = []
+        gross_return_values: list[float] = []
+        net_return_values: list[float] = []
+        fees_paid = 0.0
+        completed_round_trips = 0
+
+        for event_idx, event in enumerate(events, start=1):
+            signed_entry_qty = target_contracts if event.direction > 0 else -target_contracts
+            entry_start = event.decision_time + latency
+            exit_start = event.decision_time + holding_period + latency
+            entry = _sweep_fill_from_agg_trades(
+                signed_quantity=signed_entry_qty,
+                start_time=entry_start,
+                trade_times_ns=trade_times_ns,
+                trade_times=trade_times,
+                prices=prices,
+                quantities=quantities,
+                is_buyer_maker=is_buyer_maker,
+                max_end_time=exit_start,
+            )
+
+            if entry.filled_quantity == 0 or entry.avg_price is None:
+                if progress is not None:
+                    progress.update(event_idx, force=event_idx == len(events))
+                continue
+
+            exit = _sweep_fill_from_agg_trades(
+                signed_quantity=-entry.filled_quantity,
+                start_time=exit_start,
+                trade_times_ns=trade_times_ns,
+                trade_times=trade_times,
+                prices=prices,
+                quantities=quantities,
+                is_buyer_maker=is_buyer_maker,
+            )
+
+            if exit.filled_quantity == 0 or exit.avg_price is None:
+                if progress is not None:
+                    progress.update(event_idx, force=event_idx == len(events))
+                continue
+
+            closed_quantity = min(abs(entry.filled_quantity), abs(exit.filled_quantity))
+            signed_closed_quantity = closed_quantity if entry.filled_quantity > 0 else -closed_quantity
+            gross_pnl = _linear_contract_pnl_usd(
+                position=signed_closed_quantity,
+                entry_price=entry.avg_price,
+                exit_price=exit.avg_price,
+                contract_notional_usd=contract_notional_usd,
+            )
+            entry_fee = abs(entry.filled_quantity) * contract_notional_usd * fee_rate
+            exit_fee = abs(exit.filled_quantity) * contract_notional_usd * fee_rate
+            trade_fees = entry_fee + exit_fee
+            net_pnl = gross_pnl - trade_fees
+
+            completed_round_trips += 1
+            fees_paid += trade_fees
+            gross_pnl_values.append(gross_pnl)
+            pnl_values.append(net_pnl)
+            gross_return_values.append(gross_pnl / initial_cash)
+            net_return_values.append(net_pnl / initial_cash)
+
+            trade_rows.append(
+                {
+                    "holding_period": holding_label,
+                    "liquidation_time": event.liquidation_time.isoformat(),
+                    "decision_time": event.decision_time.isoformat(),
+                    "side": event.side,
+                    "direction": event.direction,
+                    "trade_notional_usd": trade_notional_usd,
+                    "target_contracts": target_contracts,
+                    "entry_start_time": entry.start_time.isoformat(),
+                    "entry_end_time": entry.end_time.isoformat() if entry.end_time else None,
+                    "entry_quantity": entry.filled_quantity,
+                    "entry_avg_price": entry.avg_price,
+                    "entry_complete": entry.is_complete,
+                    "exit_start_time": exit.start_time.isoformat(),
+                    "exit_end_time": exit.end_time.isoformat() if exit.end_time else None,
+                    "exit_quantity": exit.filled_quantity,
+                    "exit_avg_price": exit.avg_price,
+                    "exit_complete": exit.is_complete,
+                    "gross_pnl": gross_pnl,
+                    "fees_paid": trade_fees,
+                    "net_pnl": net_pnl,
+                    "aggregate_quantity": event.aggregate_quantity,
+                    "trailing_threshold": event.trailing_threshold,
+                }
+            )
+
+            if progress is not None:
+                progress.update(event_idx, force=event_idx == len(events))
+
+        gross_returns = np.array(gross_return_values)
+        net_returns = np.array(net_return_values)
+
+        summary_rows.append(
+            {
+                "holding_period": holding_label,
+                "execution_model": "aggTrades_sweep_latency",
+                "latency_ms": latency.total_seconds() * 1_000,
+                "trade_notional_usd": trade_notional_usd,
+                "target_contracts": target_contracts,
+                "num_signal_events": float(len(events)),
+                "num_completed_round_trips": float(completed_round_trips),
+                "gross_pnl": float(sum(gross_pnl_values)),
+                "net_pnl": float(sum(pnl_values)),
+                "fees_paid": fees_paid,
+                "gross_return_volatility": _return_volatility(gross_returns),
+                "net_return_volatility": _return_volatility(net_returns),
+                "gross_sharpe": _sharpe(gross_returns),
+                "net_sharpe": _sharpe(net_returns),
+            }
+        )
+
+    summary = pl.DataFrame(summary_rows)
+    trades = pl.DataFrame(trade_rows)
+
+    if summary_csv_path is not None:
+        summary.write_csv(summary_csv_path)
+    if trades_csv_path is not None:
+        trades.write_csv(trades_csv_path)
+
+    return {
+        "summary": summary,
+        "trades": trades,
+    }
+
+
+def run_liquidation_momentum_model_c_sensitivity(
+    liq_snap_path: Path = DEFAULT_LIQ_SNAP_PATH,
+    agg_trades_path: Path = DEFAULT_AGG_TRADES_PATH,
+    start_date: date = date(2023, 6, 25),
+    end_date: date = date(2024, 6, 24),
+    holding_periods: tuple[timedelta, ...] = (
+        timedelta(seconds=5),
+        timedelta(seconds=10),
+        timedelta(seconds=30),
+        timedelta(minutes=1),
+        timedelta(minutes=2),
+    ),
+    trade_notional_usd_grid: tuple[float, ...] = DEFAULT_TRADE_NOTIONAL_USD_GRID,
+    initial_cash: float = 1_000_000.0,
+    latency: timedelta = DEFAULT_LATENCY,
+    fee_rate: float = TAKER_FEE_RATE,
+    contract_notional_usd: float = CONTRACT_NOTIONAL_USD,
+    summary_csv_path: Path = DEFAULT_MODEL_C_SUMMARY_PATH,
+    trades_csv_path: Path = DEFAULT_MODEL_C_TRADES_PATH,
+    show_progress: bool = True,
+) -> dict[str, pl.DataFrame]:
+    tasks = [
+        {
+            "liq_snap_path": liq_snap_path,
+            "agg_trades_path": agg_trades_path,
+            "start_date": start_date,
+            "end_date": end_date,
+            "holding_period": holding_period,
+            "trade_notional_usd": trade_notional_usd,
+            "initial_cash": initial_cash,
+            "latency": latency,
+            "fee_rate": fee_rate,
+            "contract_notional_usd": contract_notional_usd,
+        }
+        for trade_notional_usd in trade_notional_usd_grid
+        for holding_period in holding_periods
+    ]
+
+    if show_progress:
+        print(
+            f"Running {len(tasks)} Model C backtests sequentially across "
+            f"{len(holding_periods)} holding periods and {len(trade_notional_usd_grid)} trade sizes",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    summary_frames: list[pl.DataFrame] = []
+    trade_frames: list[pl.DataFrame] = []
+    _delete_if_exists(summary_csv_path)
+    _delete_if_exists(trades_csv_path)
+    progress = (
+        ProgressPrinter("model-c grid", total=len(tasks), update_every=1)
+        if show_progress
+        else None
+    )
+
+    for completed, task in enumerate(tasks, start=1):
+        cell_label = (
+            f"{_format_timedelta(task['holding_period'])}, "
+            f"${task['trade_notional_usd']:,.0f}"
+        )
+        if show_progress:
+            print(
+                f"Starting grid cell {completed}/{len(tasks)}: "
+                f"{cell_label}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        result = _run_model_c_grid_cell(task, progress_label=cell_label if show_progress else None)
+        summary_frames.append(result["summary"])
+        trade_frames.append(result["trades"])
+        _append_csv(result["summary"], summary_csv_path)
+        _append_csv(result["trades"], trades_csv_path)
+        if progress is not None:
+            progress.update(completed, force=completed == len(tasks))
+
+    summary = pl.concat(summary_frames, how="vertical") if summary_frames else pl.DataFrame()
+    trades = pl.concat(trade_frames, how="vertical") if trade_frames else pl.DataFrame()
+
+    if not summary.is_empty():
+        summary = summary.sort(["trade_notional_usd", "holding_period"])
+    if not trades.is_empty():
+        trades = trades.sort(["trade_notional_usd", "holding_period", "decision_time"])
+
+    return {
+        "summary": summary,
+        "trades": trades,
+    }
+
+
+def _delete_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
+def _append_csv(df: pl.DataFrame, path: Path) -> None:
+    if df.is_empty():
+        return
+
+    include_header = not path.exists()
+    with path.open("ab") as file:
+        df.write_csv(file, include_header=include_header)
+
+
+def _run_model_c_grid_cell(
+    task: dict,
+    progress_label: str | None = None,
+) -> dict[str, pl.DataFrame]:
+    holding_period = task["holding_period"]
+    trade_notional_usd = task["trade_notional_usd"]
+
+    _progress_message(progress_label, "before reading liquidation snapshots")
+    liq_snap = load_liq_snap(
+        liq_snap_path=task["liq_snap_path"],
+        start_date=task["start_date"],
+        end_date=task["end_date"],
+    ).collect()
+    _progress_message(progress_label, f"after reading {len(liq_snap):,} liquidation snapshots")
+
+    _progress_message(progress_label, "before reading aggregate trades")
+    agg_trades = load_agg_trades(
+        agg_trades_path=task["agg_trades_path"],
+        start_date=task["start_date"],
+        end_date=task["end_date"],
+    ).collect()
+    _progress_message(progress_label, f"after reading {len(agg_trades):,} aggregate trades")
+    _progress_message(progress_label, "starting actual Model C backtest")
+
+    return run_liquidation_momentum_model_c_backtests(
+        liq_snap=liq_snap,
+        agg_trades=agg_trades,
+        holding_periods=(holding_period,),
+        initial_cash=task["initial_cash"],
+        trade_notional_usd=trade_notional_usd,
+        latency=task["latency"],
+        fee_rate=task["fee_rate"],
+        contract_notional_usd=task["contract_notional_usd"],
+        summary_csv_path=None,
+        trades_csv_path=None,
+        show_progress=progress_label is not None,
+    )
+
+
+def _sweep_fill_from_agg_trades(
+    signed_quantity: float,
+    start_time: datetime,
+    trade_times_ns: np.ndarray,
+    trade_times: list[datetime],
+    prices: np.ndarray,
+    quantities: np.ndarray,
+    is_buyer_maker: np.ndarray,
+    max_end_time: datetime | None = None,
+) -> SweepExecution:
+    requested_abs = abs(signed_quantity)
+    if requested_abs == 0:
+        return SweepExecution(signed_quantity, 0.0, None, start_time, None, True)
+
+    start_ns = _datetime_to_ns(start_time)
+    max_end_ns = _datetime_to_ns(max_end_time) if max_end_time is not None else None
+    start_idx = int(np.searchsorted(trade_times_ns, start_ns, side="left"))
+    want_buyer_maker = signed_quantity < 0
+    remaining = requested_abs
+    filled_abs = 0.0
+    notional_px_qty = 0.0
+    end_time: datetime | None = None
+
+    for idx in range(start_idx, len(trade_times_ns)):
+        if max_end_ns is not None and trade_times_ns[idx] > max_end_ns:
+            break
+        if bool(is_buyer_maker[idx]) != want_buyer_maker:
+            continue
+
+        fill_abs = min(remaining, float(quantities[idx]))
+        filled_abs += fill_abs
+        remaining -= fill_abs
+        notional_px_qty += fill_abs * float(prices[idx])
+        end_time = trade_times[idx]
+
+        if remaining <= 0:
+            break
+
+    signed_filled = filled_abs if signed_quantity > 0 else -filled_abs
+    avg_price = notional_px_qty / filled_abs if filled_abs > 0 else None
+    return SweepExecution(
+        requested_quantity=signed_quantity,
+        filled_quantity=signed_filled,
+        avg_price=avg_price,
+        start_time=start_time,
+        end_time=end_time,
+        is_complete=filled_abs >= requested_abs,
+    )
+
+
+def _linear_contract_pnl_usd(
+    position: float,
+    entry_price: float,
+    exit_price: float,
+    contract_notional_usd: float,
+) -> float:
+    return position * contract_notional_usd * (exit_price / entry_price - 1.0)
+
+
+def _datetime_to_ns(value: datetime | None) -> int:
+    if value is None:
+        raise ValueError("datetime value cannot be None")
+    return int(value.timestamp() * 1_000_000_000)
+
+
 if __name__ == "__main__":
     train_start_date = date(2023, 6, 25)
     train_end_date = date(2024, 6, 24)
@@ -771,30 +1192,26 @@ if __name__ == "__main__":
     initial_cash = 1_000_000.0
     fee_rate = TAKER_FEE_RATE
     contract_notional_usd = 100.0
+    latency = DEFAULT_LATENCY
+    trade_notional_usd_grid = DEFAULT_TRADE_NOTIONAL_USD_GRID
 
-    # Positions are tracked in contracts. A $1,000,000 notional position is 10,000 contracts.
+    # Positions are tracked in contracts. For BTCUSD_PERP, contracts = dollar notional / 100.
+    # Model C execution skips a latency window, then sweeps through actual aggTrades.
     # BTCUSD_PERP is modeled with non-VIP COIN-M taker fees: 5 bps per market-order leg.
-    df_book_ticker = load_book_ticker(
+    results = run_liquidation_momentum_model_c_sensitivity(
+        liq_snap_path=DEFAULT_LIQ_SNAP_PATH,
+        agg_trades_path=DEFAULT_AGG_TRADES_PATH,
         start_date=train_start_date,
         end_date=train_end_date,
-    )
-    df_liq_snap = load_liq_snap(
-        start_date=train_start_date,
-        end_date=train_end_date,
-    )
-    df_agg_trades = load_agg_trades(
-        start_date=train_start_date,
-        end_date=train_end_date,
-    )
-
-    results = run_liquidation_momentum_backtests(
-        book=df_book_ticker,
-        liq_snap=df_liq_snap,
-        agg_trades=df_agg_trades,
         holding_periods=holding_periods,
+        trade_notional_usd_grid=trade_notional_usd_grid,
         initial_cash=initial_cash,
+        latency=latency,
         fee_rate=fee_rate,
         contract_notional_usd=contract_notional_usd,
-        show_progress=True,
+        summary_csv_path=DEFAULT_MODEL_C_SUMMARY_PATH,
+        trades_csv_path=DEFAULT_MODEL_C_TRADES_PATH,
     )
     print(results["summary"])
+    print(f"Wrote summary CSV to {DEFAULT_MODEL_C_SUMMARY_PATH}")
+    print(f"Wrote trades CSV to {DEFAULT_MODEL_C_TRADES_PATH}")
