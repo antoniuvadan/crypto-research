@@ -39,6 +39,7 @@ data/
   BTCUSD_PERP-aggTrades/             *.parquet, one per day
   BTCUSD_PERP-bookTicker/            *.zip (raw Binance downloads)
   samples/                            small sample files for quick iteration
+  results/                            derived backtest / analysis output CSVs
 ```
 
 bookTicker data is still in `.zip` format. The other two datasets have been processed to parquet.
@@ -116,10 +117,10 @@ Signal logic (implemented in `backtester.py`):
 python backtester.py
 ```
 
-This runs `run_liquidation_momentum_model_c_sensitivity()` over the full study period, across holding periods `[5s, 10s, 30s, 1min, 2min]` and trade sizes `[$50k, $100k]`. Outputs:
+This runs `run_liquidation_momentum_model_c_sensitivity()` over the full study period, across holding periods `[5s, 10s, 30s, 1min, 2min]` and trade sizes `[$50k, $100k]`. Outputs (written under `data/results/`):
 
-- `liquidation_momentum_model_c_summary.csv`
-- `liquidation_momentum_model_c_trades.csv`
+- `data/results/liquidation_momentum_model_c_summary.csv`
+- `data/results/liquidation_momentum_model_c_trades.csv`
 
 Progress is written to stderr; summary table is printed to stdout.
 

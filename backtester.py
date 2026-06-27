@@ -21,8 +21,8 @@ ROUND_TRIP_TAKER_FEE_RATE = TAKER_FEE_RATE * 2.0
 DEFAULT_LATENCY = timedelta(milliseconds=300)
 DEFAULT_TRADE_NOTIONAL_USD = 50_000.0
 DEFAULT_TRADE_NOTIONAL_USD_GRID = (50_000.0, 100_000.0)
-DEFAULT_MODEL_C_SUMMARY_PATH = Path("liquidation_momentum_model_c_summary.csv")
-DEFAULT_MODEL_C_TRADES_PATH = Path("liquidation_momentum_model_c_trades.csv")
+DEFAULT_MODEL_C_SUMMARY_PATH = Path("data/results/liquidation_momentum_model_c_summary.csv")
+DEFAULT_MODEL_C_TRADES_PATH = Path("data/results/liquidation_momentum_model_c_trades.csv")
 
 LIQ_SNAP_COLS = [
     "time_datetime",
@@ -429,7 +429,7 @@ class LiquidationMomentumStrategy:
         progress_label: str | None = None,
     ) -> None:
         self.holding_period = holding_period
-        self.size_fraction = size_fraction # TODO: stop using size fraction and use a more realistic entry price model
+        self.size_fraction = size_fraction
         self.events = self._build_signal_events(
             liq_snap=liq_snap,
             agg_trades=agg_trades,
@@ -501,7 +501,7 @@ class LiquidationMomentumStrategy:
         else:
             if agg_trades is None:
                 raise ValueError(
-                    f"{aggregate_quantity_col!r} is missing, so agg_trades is required."
+                    f"{aggregate_quantity_col!r} is missing, agg_trades is required."
                 )
             _progress_message(progress_label, "collecting aggregate trades")
             trades_df = agg_trades.collect() if isinstance(agg_trades, pl.LazyFrame) else agg_trades
@@ -915,12 +915,12 @@ def run_liquidation_momentum_model_c_backtests(
                     "entry_start_time": entry.start_time.isoformat(),
                     "entry_end_time": entry.end_time.isoformat() if entry.end_time else None,
                     "entry_quantity": entry.filled_quantity,
-                    "entry_avg_price": entry.avg_price,
+                    "entry_vwap": entry.avg_price,
                     "entry_complete": entry.is_complete,
                     "exit_start_time": exit.start_time.isoformat(),
                     "exit_end_time": exit.end_time.isoformat() if exit.end_time else None,
                     "exit_quantity": exit.filled_quantity,
-                    "exit_avg_price": exit.avg_price,
+                    "exit_vwap": exit.avg_price,
                     "exit_complete": exit.is_complete,
                     "gross_pnl": gross_pnl,
                     "fees_paid": trade_fees,
@@ -959,8 +959,10 @@ def run_liquidation_momentum_model_c_backtests(
     trades = pl.DataFrame(trade_rows)
 
     if summary_csv_path is not None:
+        summary_csv_path.parent.mkdir(parents=True, exist_ok=True)
         summary.write_csv(summary_csv_path)
     if trades_csv_path is not None:
+        trades_csv_path.parent.mkdir(parents=True, exist_ok=True)
         trades.write_csv(trades_csv_path)
 
     return {
@@ -1069,6 +1071,7 @@ def _append_csv(df: pl.DataFrame, path: Path) -> None:
     if df.is_empty():
         return
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     include_header = not path.exists()
     with path.open("ab") as file:
         df.write_csv(file, include_header=include_header)
@@ -1191,7 +1194,7 @@ if __name__ == "__main__":
     )
     initial_cash = 1_000_000.0
     fee_rate = TAKER_FEE_RATE
-    contract_notional_usd = 100.0
+    contract_notional_usd = CONTRACT_NOTIONAL_USD
     latency = DEFAULT_LATENCY
     trade_notional_usd_grid = DEFAULT_TRADE_NOTIONAL_USD_GRID
 
