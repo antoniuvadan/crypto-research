@@ -26,6 +26,7 @@ from pathlib import Path
 import polars as pl
 
 import backtester as bt
+import backtest_momentum as bm
 
 START_DATE = date(2023, 6, 25)
 END_DATE = date(2024, 6, 24)
@@ -55,7 +56,7 @@ def main() -> None:
 
     # Precompute the +/-5s same-direction aggregate-quantity column once so both
     # size runs build an identical event set without recomputing it.
-    agg_qty = bt._same_direction_aggregate_quantities(
+    agg_qty = bm._same_direction_aggregate_quantities(
         liq_df=liq, trades_df=agg, seconds_before=5, seconds_after=5
     )
     liq = liq.with_columns(pl.Series("agg_qty_5s_before_5s_after", agg_qty))
@@ -63,7 +64,7 @@ def main() -> None:
     summaries: list[pl.DataFrame] = []
     trades: list[pl.DataFrame] = []
     for size in SIZES:
-        result = bt.run_liquidation_momentum_model_c_backtests(
+        result = bm.run_liquidation_momentum_model_c_backtests(
             liq_snap=liq,
             agg_trades=agg,
             holding_periods=HOLDING_PERIODS,

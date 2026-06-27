@@ -24,12 +24,16 @@ Key caveat in the raw data: Binance only pushes **the largest liquidation within
 
 | File | Purpose |
 |---|---|
-| `backtester.py` | All trading logic, data loaders, and backtest runners — the single source of truth for the strategy |
+| `backtester.py` | Reusable backtesting engine + library: event-driven `Backtester`, data structures (`MarketSnapshot`/`Order`/`Fill`/`PortfolioSnapshot`/`Strategy`), data loaders, fill simulation (`_sweep_fill_from_agg_trades`), and metrics. No strategy-specific logic. |
+| `backtest_momentum.py` | The liquidation signal definition + momentum strategy (`LiquidationMomentumStrategy`, `_same_direction_aggregate_quantities`) and the run drivers (naive book-ticker + Model C sensitivity). Imports the engine from `backtester.py`. Has a `__main__` that runs the Model C grid. |
+| `backtest_reversion.py` | Reversion variant — same signal/events, trade direction flipped (`signal_direction_sign=-1`). Reuses the Model C runner from `backtest_momentum.py`. |
+| `pnl_decomposition.py` | Decomposes Model C net P&L per trade into gross-mid, latency, spread, and fees (bps). Takes `--trades`/`--label`; reads a trades CSV + bookTicker. |
 | `downloader.py` | Downloads `liquidationSnapshot` zips from Binance Vision, extracts CSVs, adds `time_datetime`, saves as parquet |
+| `research.md` | Dated, self-contained research findings (one section per finding) |
 | `research_journal.md` | Dated research notes and open TODOs |
 | `README.md` | High-level research question and data overview |
 
-Jupyter notebooks (`.ipynb`) exist but **do not read them** — they are too token-heavy. All logic that matters has been migrated to `backtester.py`.
+Jupyter notebooks (`.ipynb`) exist but **do not read them** — they are too token-heavy. All logic that matters lives in the `backtest*.py` files.
 
 ## Data directory layout
 
@@ -96,7 +100,7 @@ A derived `mid_price` column is added on load: `(best_bid_price + best_ask_price
 
 ## Strategy: Liquidation Momentum (`LiquidationMomentumStrategy`)
 
-Signal logic (implemented in `backtester.py`):
+Signal logic (implemented in `backtest_momentum.py`):
 
 1. For each liquidation event, compute `agg_qty_5s_before_5s_after`: same-direction aggTrade volume in the [-5s, +5s] window around the liquidation time.
 2. Compare against a trailing 7-day 98th-percentile threshold.
@@ -114,13 +118,21 @@ Signal logic (implemented in `backtester.py`):
 ## Running the backtest
 
 ```bash
-python backtester.py
+python backtest_momentum.py    # momentum (trade with the flow)
+python backtest_reversion.py   # reversion (trade against the flow)
 ```
 
-This runs `run_liquidation_momentum_model_c_sensitivity()` over the full study period, across holding periods `[5s, 10s, 30s, 1min, 2min]` and trade sizes `[$50k, $100k]`. Outputs (written under `data/results/`):
+`backtest_momentum.py` runs `run_liquidation_momentum_model_c_sensitivity()` over the full study period, across holding periods `[5s, 10s, 30s, 1min, 2min]` and trade sizes `[$50k, $100k]`. Outputs (written under `data/results/`):
 
-- `data/results/liquidation_momentum_model_c_summary.csv`
-- `data/results/liquidation_momentum_model_c_trades.csv`
+- `data/results/liquidation_momentum_model_c_summary.csv` / `..._trades.csv`
+- `backtest_reversion.py` → `data/results/reversion_model_c_summary.csv` / `..._trades.csv`
+
+Then decompose the P&L:
+
+```bash
+python pnl_decomposition.py                                              # momentum
+python pnl_decomposition.py --trades data/results/reversion_model_c_trades.csv --label reversion_decomposition
+```
 
 Progress is written to stderr; summary table is printed to stdout.
 
