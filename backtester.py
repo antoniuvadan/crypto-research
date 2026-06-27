@@ -789,10 +789,16 @@ def run_liquidation_momentum_model_c_backtests(
     contract_notional_usd: float = CONTRACT_NOTIONAL_USD,
     summary_csv_path: Path | None = DEFAULT_MODEL_C_SUMMARY_PATH,
     trades_csv_path: Path | None = DEFAULT_MODEL_C_TRADES_PATH,
+    signal_direction_sign: int = 1,
     show_progress: bool = False,
 ) -> dict[str, pl.DataFrame]:
     """
     Model C execution: latency, then sweep through same-side aggTrades for entry and exit.
+
+    signal_direction_sign controls trade direction relative to the liquidating flow:
+    +1 = momentum (trade with the flow, the original signal), -1 = reversion
+    (trade against the flow). The recorded `side`/`direction` reflect the executed
+    trade, so fills, fees, and P&L are all simulated on the correct side.
 
     Trade size is explicit notional. Contracts = trade_notional_usd / contract_notional_usd.
     """
@@ -849,7 +855,8 @@ def run_liquidation_momentum_model_c_backtests(
         completed_round_trips = 0
 
         for event_idx, event in enumerate(events, start=1):
-            signed_entry_qty = target_contracts if event.direction > 0 else -target_contracts
+            traded_direction = signal_direction_sign * event.direction
+            signed_entry_qty = target_contracts * traded_direction
             entry_start = event.decision_time + latency
             exit_start = event.decision_time + holding_period + latency
             entry = _sweep_fill_from_agg_trades(
@@ -908,8 +915,8 @@ def run_liquidation_momentum_model_c_backtests(
                     "holding_period": holding_label,
                     "liquidation_time": event.liquidation_time.isoformat(),
                     "decision_time": event.decision_time.isoformat(),
-                    "side": event.side,
-                    "direction": event.direction,
+                    "side": "BUY" if traded_direction > 0 else "SELL",
+                    "direction": traded_direction,
                     "trade_notional_usd": trade_notional_usd,
                     "target_contracts": target_contracts,
                     "entry_start_time": entry.start_time.isoformat(),

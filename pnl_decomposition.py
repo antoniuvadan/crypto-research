@@ -24,13 +24,14 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import date
 from pathlib import Path
 
 import polars as pl
 
-TRADES_PATH = Path("data/results/liquidation_momentum_model_c_trades.csv")
+DEFAULT_TRADES_PATH = Path("data/results/liquidation_momentum_model_c_trades.csv")
 BOOK_TICKER_DIR = Path("data/BTCUSD_PERP-bookTicker")
 RESULTS_DIR = Path("data/results")
 FEE_RATE = 0.0005  # 5 bps taker per leg
@@ -79,10 +80,21 @@ def lookup_mids(lookups: pl.DataFrame) -> pl.DataFrame:
 
 
 def main() -> None:
-    if not TRADES_PATH.exists():
-        sys.exit(f"trades file not found: {TRADES_PATH}")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--trades", type=Path, default=DEFAULT_TRADES_PATH,
+        help="Model C trades CSV to decompose (default: momentum).",
+    )
+    parser.add_argument(
+        "--label", default="pnl_decomposition",
+        help="Output basename: data/results/{label}_{trades,summary}.csv.",
+    )
+    args = parser.parse_args()
 
-    trades = pl.read_csv(TRADES_PATH).with_row_index("tid")
+    if not args.trades.exists():
+        sys.exit(f"trades file not found: {args.trades}")
+
+    trades = pl.read_csv(args.trades).with_row_index("tid")
     for c in ("decision_time", "entry_start_time", "exit_start_time"):
         trades = trades.with_columns(
             pl.col(c).str.to_datetime(time_zone="UTC").alias(c)
@@ -181,8 +193,8 @@ def main() -> None:
     print(table)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    trades_out = RESULTS_DIR / "pnl_decomposition_trades.csv"
-    summary_out = RESULTS_DIR / "pnl_decomposition_summary.csv"
+    trades_out = RESULTS_DIR / f"{args.label}_trades.csv"
+    summary_out = RESULTS_DIR / f"{args.label}_summary.csv"
     df.write_csv(trades_out)
     table.write_csv(summary_out)
     print(f"\nWrote {trades_out} and {summary_out}")

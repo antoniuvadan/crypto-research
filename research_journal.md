@@ -1,3 +1,34 @@
+# Saturday June 27, 2026
+
+- Step 1 (P&L decomposition) done. Split Model C net P&L per trade into
+  gross_mid_to_mid, latency, entry/exit spread, and fees (bps, sign-corrected);
+  reconciles exactly to realized net. Tool: `pnl_decomposition.py`, outputs in
+  `data/results/`. Full writeup: `research.md` Finding 1.
+- Result: the momentum signal is **dead and inverted** at every horizon.
+  `gross_mid_to_mid` is negative before any friction and worsens monotonically
+  with horizon (−3.2 bp @5s → −15.7 bp @2min) — the signature of mean-reversion
+  (price retraces against the liquidation-flow direction). Net loss is dominated
+  by the 10 bp round-trip taker fee; spread ≈ 2 bp; latency negligible and
+  slightly favorable (−0.24 bp); size impact negligible ($50k ≈ $100k).
+- Implication: a naive reversion flip only clears friction at 1–2 min, and
+  thinly. Needs maker entry (kill the 10 bp fee) and/or event selection.
+
+- [x] Flipped to reversion (`backtest_reversion.py`, `signal_direction_sign=-1`;
+  identical 969-event set, opposite trade direction). See `research.md` Finding 2.
+  - `gross_mid_to_mid` flips sign almost exactly (+3.2 bp @5s → +15.7 bp @2min),
+    confirming the retracement. Net positive once it clears the 10 bp fee:
+    marginal at 30s (+0.6, t≈0.3), meaningful at 1min (+6.9, t≈2.9) and 2min
+    (+7.9, t≈2.6). Still loses at 5s/10s.
+  - Caveats: in-sample, optimistic fills, low per-trade Sharpe (~0.09), execution
+    bps are cross-feed/timing-sensitive — trust `gross_mid_to_mid`, not spread terms.
+
+TODO (next):
+- [ ] **Step 2 — maker entry** (highest leverage): 10 bp taker fee eats ~2/3 of the
+      gross edge; maker-in/taker-out saves ~3 bp/round-trip → 30s positive, 1–2 min ~+10 bp.
+- [ ] Out-of-sample / robustness check on the 1–2 min edge before believing it.
+- [ ] Step 3 — filter events by liquidation magnitude / vol regime.
+
+
 # Friday May 29, 2026
 
 - Graphed price and liquidations around the liquidation with maximum volume in
