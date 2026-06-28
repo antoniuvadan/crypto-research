@@ -86,6 +86,7 @@ class LiquidationMomentumStrategy:
         agg_trades: pl.LazyFrame | pl.DataFrame | None = None,
         holding_period: timedelta = timedelta(seconds=5),
         percentile: float = 0.98,
+        upper_percentile: float | None = None,
         trailing_window: timedelta = timedelta(days=7),
         seconds_before: int = 5,
         seconds_after: int = 5,
@@ -103,6 +104,7 @@ class LiquidationMomentumStrategy:
             seconds_before=seconds_before,
             seconds_after=seconds_after,
             aggregate_quantity_col=aggregate_quantity_col,
+            upper_percentile=upper_percentile,
             progress_label=progress_label,
         )
         self._next_event_idx = 0
@@ -153,8 +155,17 @@ class LiquidationMomentumStrategy:
         seconds_before: int,
         seconds_after: int,
         aggregate_quantity_col: str,
+        upper_percentile: float | None = None,
         progress_label: str | None = None,
     ) -> list[MomentumSignalEvent]:
+        """
+        Fire an event when an event's aggregate quantity exceeds the trailing
+        `percentile` threshold. When `upper_percentile` is given, the event must
+        also stay at or below that trailing threshold, selecting an inner band of
+        the cascade-size distribution (e.g. the 80th-95th pct slice) instead of
+        the open-ended right tail. Both thresholds are computed on the same
+        trailing window, so the warmup NaN region is skipped consistently.
+        """
         _progress_message(progress_label, "collecting liquidation snapshots")
         liq_df = liq_snap.collect() if isinstance(liq_snap, pl.LazyFrame) else liq_snap
         liq_df = liq_df.sort("time_datetime")
@@ -183,17 +194,31 @@ class LiquidationMomentumStrategy:
         liq_times = liq_df["time_datetime"].to_list()
         liq_times_ns = liq_df["time_datetime"].cast(pl.Int64).to_numpy()
         sides = liq_df["side"].to_list()
+        window_ns = int(trailing_window.total_seconds() * 1e9)
         thresholds = _trailing_quantiles(
             times_ns=liq_times_ns,
             values=agg_qty,
-            window_ns=int(trailing_window.total_seconds() * 1e9),
+            window_ns=window_ns,
             percentile=percentile,
         )
+        if upper_percentile is not None:
+            upper_thresholds = _trailing_quantiles(
+                times_ns=liq_times_ns,
+                values=agg_qty,
+                window_ns=window_ns,
+                percentile=upper_percentile,
+            )
+        else:
+            upper_thresholds = np.full(len(agg_qty), np.inf, dtype=float)
 
         _progress_message(progress_label, "building signal events")
         events: list[MomentumSignalEvent] = []
-        for liq_time, side, qty, threshold in zip(liq_times, sides, agg_qty, thresholds):
+        for liq_time, side, qty, threshold, upper in zip(
+            liq_times, sides, agg_qty, thresholds, upper_thresholds
+        ):
             if np.isnan(threshold) or qty <= threshold:
+                continue
+            if np.isnan(upper) or qty > upper:
                 continue
 
             direction = 1 if side == "BUY" else -1
@@ -374,6 +399,8 @@ def run_liquidation_momentum_model_c_backtests(
     summary_csv_path: Path | None = DEFAULT_MODEL_C_SUMMARY_PATH,
     trades_csv_path: Path | None = DEFAULT_MODEL_C_TRADES_PATH,
     signal_direction_sign: int = 1,
+    percentile: float = 0.98,
+    upper_percentile: float | None = None,
     exit_policy: ExitPolicy | None = None,
     book_ticker_dir: Path | None = DEFAULT_BOOK_TICKER_PATH,
     show_progress: bool = False,
@@ -404,11 +431,12 @@ def run_liquidation_momentum_model_c_backtests(
     events = LiquidationMomentumStrategy._build_signal_events(
         liq_snap=liq_snap,
         agg_trades=trades_df,
-        percentile=0.98,
+        percentile=percentile,
         trailing_window=timedelta(days=7),
         seconds_before=5,
         seconds_after=5,
         aggregate_quantity_col="agg_qty_5s_before_5s_after",
+        upper_percentile=upper_percentile,
         progress_label=label if show_progress else None,
     )
 

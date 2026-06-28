@@ -199,3 +199,73 @@ so the edge can't survive honest error bars until it gets thicker.
    1–2 min edge.
 3. Step 3 — event selection (liquidation magnitude / vol regime) to concentrate
    the edge.
+
+---
+
+## Finding 3 — Reversion strengthens with cascade size: the inner region is the wrong place to trade
+
+**Date:** 2026-06-28
+**Artifacts:** `backtest_reversion_event_slices.py` (writes
+`data/results/reversion_event_slices_summary.csv`). The signal builder
+(`LiquidationMomentumStrategy._build_signal_events`) and the Model C runner now
+take a percentile **band** (`percentile` lower + `upper_percentile`), selecting an
+inner slice of the trailing-7d cascade-size distribution instead of the open-ended
+right tail.
+**Scope:** training window 2023-06-25 → 2024-06-24, reversion
+(`signal_direction_sign=-1`), $50k, fixed-horizon exit across [5s,10s,30s,1min,2min].
+
+### Motivation / hypothesis
+
+The 98th-pct threshold was built for the *momentum* signal — it isolates the
+open-ended right tail (largest cascades). For reversion the working heuristic was
+that the right tail (≥98th) might be **regime-shifting, non-reverting** moves,
+while the far left tail dislocates too little to clear fees — so the tradeable
+reversion should live in the **inner region**. Tested three inner bands of the
+trailing distribution, walking down from just below the tail toward the median:
+[0.50,0.80], [0.80,0.95], [0.95,0.98].
+
+### Results (per trade, same metric throughout; gross = realized fill-to-fill,
+net = after 10 bps round-trip taker fee)
+
+Gross reversion edge by band and horizon (bps):
+
+| band | n (2min) | 5s | 10s | 30s | 1min | 2min |
+|---|---|---|---|---|---|---|
+| [0.50,0.80] | 12,318 | 2.42 | 2.43 | 2.54 | 2.62 | 3.08 |
+| [0.80,0.95] | 6,096  | 2.90 | 2.73 | 3.21 | 1.54 | 3.69 |
+| [0.95,0.98] | 1,205  | 2.96 | 4.53 | 6.26 | 5.09 | 6.80 |
+| **[0.98,→] (tail)** | 969 | **5.21** | **8.02** | **10.58** | **16.93** | **17.90** |
+
+Net (after fee), 2min: [0.50,0.80] **−6.92**, [0.80,0.95] **−6.31**, [0.95,0.98]
+**−3.20**, tail **+7.90**. Every inner-region cell is net-negative at every
+horizon; with n up to 12k the losses are overwhelmingly significant (t_IID ≈ −15
+to −100). The tail row reproduces Finding 2 exactly (net +6.93 @1min, +7.90 @2min).
+
+### Verdict: the heuristic is inverted
+
+**Reversion strength increases monotonically with cascade size**, at every
+horizon. At 2 min the gross edge runs +3.08 → +3.69 → +6.80 → **+17.90** bps as
+the band climbs from [0.50,0.80] to the ≥98th tail. The largest cascades revert
+the *most*, not the least — the opposite of the "big = non-reverting" guess. The
+inner region reverts too weakly to clear the 10 bps fee anywhere, so it is
+decisively unprofitable, not marginal. The only net-positive region remains the
+extreme right tail at 1–2 min — i.e. the original 98th-pct threshold was already
+selecting the right events; the problem (Findings 1–2) was never event selection,
+it is the fee and the thin, not-yet-significant tail edge.
+
+### Cross-cutting clue: gross grows with horizon in every band
+
+Gross rises with holding period across the board, and steeply in the tail
+(5.21 → 17.90 over 5s → 2min). The retracement is still building at 2 min — the
+current horizon grid may be truncating it. This motivates testing **longer
+horizons** (1m / 5m / 30m / 60m) on the tail, to see whether the gross edge keeps
+growing enough to clear the fee with room to spare.
+
+### Next steps
+
+1. **Longer horizons on the tail** — extend the holding grid to [1m,5m,30m,60m]
+   (replacing the short grid) and re-measure gross/net on the ≥98th events; the
+   monotone-in-horizon gross suggests the edge may not have peaked by 2 min.
+2. Maker entry (Finding 2 Step 2) remains the highest-leverage fee attack and is
+   orthogonal to this — it lifts every cell by ~3–6 bps round-trip.
+3. Drop the inner-region event-selection branch: it is ruled out here.

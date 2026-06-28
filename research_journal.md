@@ -1,3 +1,40 @@
+# Sunday June 28, 2026
+
+- Built the dynamic-strategy plumbing: book state (`BookProvider`/`BookView`,
+  L1 microstructure) is now feedable into the decision path, plus an `ExitPolicy`
+  seam in the Model C runner (default `FixedHorizonExit` is byte-identical to the
+  old fixed clock). See `dynamic_exit_strategy.md`.
+- [x] **Improvement 1 — state-dependent exit** (`backtester.RetracementExit`,
+  driver `backtest_reversion_dynamic.py`). Take-profit at a fraction of the cascade
+  displacement, stop on continuation, time cap. Mechanism works; on a 6-week slice
+  it is insensitive to TP/stop params (~−10 bps) and doesn't beat fixed-2min — but
+  that slice is unrepresentative (fixed-2min −4.94 vs +7.90 full study). No
+  full-study/OOS verdict yet.
+
+- [x] **Event-selection sweep (entry side)** — `backtest_reversion_event_slices.py`;
+  generalized the signal to a percentile **band** (`upper_percentile`). Tested the
+  heuristic that the ≥98th tail is non-reverting and the inner region holds the
+  edge. **Heuristic is inverted** (see `research.md` Finding 3): reversion strength
+  grows *monotonically with cascade size* — at 2min gross runs +3.1 → +3.7 → +6.8
+  → **+17.9** bps from [0.50,0.80] up to the ≥98th tail. Every inner band is
+  decisively net-negative (n up to 12k, t_IID −15…−100); only the extreme tail
+  clears the fee, and only at 1–2min. The original 98th threshold was already
+  picking the right events. **Inner-region branch is dead.**
+
+TODO (next):
+- [ ] **Longer horizons on the tail** — replace the short grid with **[1m, 5m, 30m,
+      60m]** and re-measure gross/net on the ≥98th events. Gross rises monotonically
+      with horizon in every band (tail: 5.2 → 17.9 bps over 5s → 2min), so the
+      retracement may still be building past 2min — the current grid could be
+      truncating the edge. Do this before anything else.
+- [ ] Improvement 2 (book-aware entry gating/sizing) — but note inner-region *size*
+      selection is now ruled out; any gating should key off spread/imbalance, not
+      cascade magnitude.
+- [ ] Improvement 3 / Step 2 — maker entry (kill the ~10 bp fee); orthogonal,
+      highest-leverage, lifts every cell ~3–6 bp round-trip.
+- [ ] Full-study + OOS run of the dynamic exit (Improvement 1) before any verdict.
+
+
 # Saturday June 27, 2026
 
 - Step 1 (P&L decomposition) done. Split Model C net P&L per trade into
