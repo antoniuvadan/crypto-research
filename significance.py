@@ -29,7 +29,7 @@ import statsmodels.api as sm
 DEFAULT_TRADES_PATH = Path("data/results/reversion_model_c_trades.csv")
 RESULTS_DIR = Path("data/results")
 CONTRACT_NOTIONAL_USD = 100.0
-HOLDING_ORDER = ["5s", "10s", "30s", "1min", "2min"]
+HOLDING_ORDER = ["5s", "10s", "30s", "1min", "2min", "5min", "30min", "60min"]
 
 
 def nw_lag(n: int) -> int:

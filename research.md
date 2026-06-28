@@ -269,3 +269,90 @@ growing enough to clear the fee with room to spare.
 2. Maker entry (Finding 2 Step 2) remains the highest-leverage fee attack and is
    orthogonal to this — it lifts every cell by ~3–6 bps round-trip.
 3. Drop the inner-region event-selection branch: it is ruled out here.
+
+---
+
+## Finding 4 — Longer horizons on the tail: a significant ~+24 bps reversion edge at 5 min
+
+**Date:** 2026-06-28
+**Artifacts:** `backtest_reversion_long_horizons.py` (writes
+`data/results/reversion_long_horizons_{summary,trades}.csv`) and
+`significance.py --trades …reversion_long_horizons_trades.csv` (Newey-West).
+**Scope:** training window 2023-06-25 → 2024-06-24, reversion
+(`signal_direction_sign=-1`), ≥98th-pct tail (the 969-event set from Findings 2–3),
+$50k, fixed-horizon exit across **[1m, 5m, 30m, 60m]**.
+
+### Motivation
+
+Finding 3 showed the tail gross edge was still climbing at 2 min (the grid's cap),
+so the 2-min horizon was likely truncating the retracement. Extend the grid.
+
+### Results (per trade; gross = realized fill-to-fill, net after 10 bps fee)
+
+| horizon | n | gross_bps | net_bps | t_IID | **t_NW** (L=6) | t_NW (L=100) |
+|---|---|---|---|---|---|---|
+| 1min  | 969 | 16.93 | 6.93  | 2.92 | 1.43 | 1.11 |
+| **5min**  | 969 | **33.67** | **23.67** | 8.51 | **4.33** | **3.43** |
+| 30min | 969 | 33.40 | 23.40 | 5.69 | 2.66 | 1.92 |
+| 60min | 969 | 22.28 | 12.28 | 2.52 | 1.20 | 0.98 |
+
+The gross edge does **not** plateau at 2 min — it nearly doubles by 5 min
+(+16.9 → +33.7), holds through 30 min, then fades by 60 min. The shape (peak at
+5–30 min, decay by 60 min) is a clean reversion signature: the bounce completes
+around 5–30 min, after which the position just holds noise.
+
+### This clears the Newey-West bar that killed the 1–2 min edge
+
+`significance.py` (HAC, auto L=6): **5 min t_NW = 4.33**, 30 min = 2.66 — both
+significant, where 1 min (1.43, the Finding 2 result) and 60 min (1.20) are not.
+**Robust to bandwidth:** widening L to 100 leaves 5 min at **t_NW = 3.43** (30 min
+falls to 1.92, 60 min ~1). The 5-min edge is the first configuration in the study
+that survives an honest serial-correlation correction.
+
+### It is not just bull-market beta
+
+The tail is SELL-skewed (718 long vs 251 short trades), so a naive worry is that
+long holds in a rising market manufacture the edge. Splitting by direction rejects
+that — at 5 min **both sides profit** (long +27.2, short +13.5 bps net); a pure
+long-drift artifact would make the shorts *lose*. By 30 min shorts (+25.2) even
+beat longs (+22.8). Reversion works in both directions, not just the long book.
+
+| horizon | long net (n=718) | short net (n=251) |
+|---|---|---|
+| 1min  | +14.93 | −15.94 |
+| 5min  | +27.21 | +13.54 |
+| 30min | +22.76 | +25.23 |
+| 60min | +10.18 | +18.27 |
+
+(The 1-min short book loses; the short-side reversion only turns on by 5 min — on
+a small n, so treat the short side cautiously.)
+
+### How much to believe it
+
+This is the strongest result in the study so far — a sizable net edge that, unlike
+F2, survives HAC and is not a directional artifact — **but it is not yet
+de-risked:**
+- **In-sample**, single training window. The bull-market-regime worry is *reduced*
+  (both directions work) but only a held-out / bear-regime test settles it.
+- **Optimistic fills** — sweep assumes the historical tape was available and the
+  order adds no impact.
+- **Not market-neutralized.** Both-directions-profit is strong evidence against a
+  beta artifact, but subtracting the contemporaneous BTC return over each hold
+  would make the alpha airtight.
+- Short-side edge rests on n=251 and flips sign between 1 and 5 min.
+
+One-liner: lengthening the hold to **5 min on the ≥98th tail** turns the thin,
+not-significant 1–2 min reversion into a **+23.7 bps net edge with t_NW ≈ 4.3
+(robust to bandwidth), profitable in both directions** — the 2-min grid was
+truncating it. Now de-risk: out-of-sample, market-neutralization, and the maker-fee
+attack (which would lift +23.7 toward ~+27 bps).
+
+### Next steps
+
+1. **Out-of-sample** confirmation of the 5-min tail edge (held-out period; ideally
+   spanning a non-bull regime).
+2. **Market-neutralize** — subtract the contemporaneous BTC return over each hold
+   to separate reversion alpha from drift.
+3. Maker entry (Step 2) — orthogonal ~3–6 bps round-trip on top.
+4. P&L-decompose the 5-min trades to confirm the edge is `gross_mid_to_mid`
+   (signal), not an execution/spread artifact.

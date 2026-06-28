@@ -21,17 +21,25 @@
   clears the fee, and only at 1–2min. The original 98th threshold was already
   picking the right events. **Inner-region branch is dead.**
 
+- [x] **Longer horizons on the tail** — `backtest_reversion_long_horizons.py`,
+  grid [1m,5m,30m,60m] on the ≥98th events. **Breakthrough** (see `research.md`
+  Finding 4): gross does NOT plateau at 2min — it nearly doubles by 5min (+16.9 →
+  +33.7 bp), holds at 30min, fades by 60min. **5min nets +23.67 bp with t_NW=4.33**
+  (auto L=6), and stays **t_NW=3.43 at L=100** — the first config to survive
+  Newey-West (1–2min never did). Not just bull-market beta: at 5min BOTH directions
+  profit (long +27.2, short +13.5 bp); a pure long-drift artifact would make shorts
+  lose. Strongest result so far, but in-sample / optimistic fills / not yet
+  market-neutralized.
+
 TODO (next):
-- [ ] **Longer horizons on the tail** — replace the short grid with **[1m, 5m, 30m,
-      60m]** and re-measure gross/net on the ≥98th events. Gross rises monotonically
-      with horizon in every band (tail: 5.2 → 17.9 bps over 5s → 2min), so the
-      retracement may still be building past 2min — the current grid could be
-      truncating the edge. Do this before anything else.
-- [ ] Improvement 2 (book-aware entry gating/sizing) — but note inner-region *size*
-      selection is now ruled out; any gating should key off spread/imbalance, not
-      cascade magnitude.
+- [ ] **De-risk Finding 4** — (a) OOS on a held-out / non-bull period; (b)
+      market-neutralize (subtract contemporaneous BTC return over each hold) to
+      split reversion alpha from drift; (c) P&L-decompose the 5min trades to confirm
+      `gross_mid_to_mid` is the source.
 - [ ] Improvement 3 / Step 2 — maker entry (kill the ~10 bp fee); orthogonal,
-      highest-leverage, lifts every cell ~3–6 bp round-trip.
+      lifts the 5min net toward ~+27 bp.
+- [ ] Improvement 2 (book-aware entry gating/sizing) — inner-region *size* selection
+      is ruled out (F3); any gating should key off spread/imbalance, not magnitude.
 - [ ] Full-study + OOS run of the dynamic exit (Improvement 1) before any verdict.
 
 
