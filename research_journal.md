@@ -1,5 +1,27 @@
 # Sunday June 28, 2026
 
+- [x] **QA: lookahead audit of the backtest harness — PASS, no lookahead in the
+  decision path.** Traced every step:
+  - Trailing threshold (`_trailing_quantiles`): slice `values[left:right]` excludes
+    the current + all future events → each event compared only to strictly-past 7d. ✓
+  - ±5s signal (`_same_direction_aggregate_quantities`): the ONLY use of post-event
+    data ([liq−5s, liq+5s]), but gated — `decision_time = liq + seconds_after` (5s),
+    so it fires only after the +5s window is fully observed. ✓
+  - Entry `start = decision + latency`; sweep (`_sweep_fill_from_agg_trades`) uses
+    `searchsorted(start, "left")` → trades at time ≥ start only, forward-only. ✓
+  - Exit `start = trigger + latency`, forward sweep. `RetracementExit` refs are
+    causal (`as_of(liq−pre)`, `as_of(decision)`) and the forward scan returns the
+    FIRST target/stop hit → only uses book up to the act instant. ✓
+  - `BookView.as_of` = `searchsorted("right")−1` (last quote ≤ t). Latency always
+    ADDED, never subtracted. ✓
+  - Post-hoc tools (`pnl_decomposition`, `market_neutralize`) measure completed
+    trades (exit-time mids are what happened, not forecasts); market-neutral drift
+    uses a strictly pre-event window. ✓
+  - Non-lookahead caveats (separate dimensions): fill realism is optimistic (assumes
+    historical tape liquidity available, zero impact); a trade at exactly
+    `exit_start` could in principle be double-used by entry+exit sweeps, but entry
+    breaks on `remaining<=0` long before, so it ~never fires.
+
 - Built the dynamic-strategy plumbing: book state (`BookProvider`/`BookView`,
   L1 microstructure) is now feedable into the decision path, plus an `ExitPolicy`
   seam in the Model C runner (default `FixedHorizonExit` is byte-identical to the
