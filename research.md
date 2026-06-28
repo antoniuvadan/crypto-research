@@ -449,3 +449,65 @@ Reconciliation is exact (net_reconstructed 23.674 ≈ net_realized 23.670).
    maker-in/taker-out saves ~3 bps, maker/maker ~6 bps round-trip.
 4. **True out-of-sample** on the held-out test period (2024-06-25 → 2024-10-14) —
    final-run only; keep it untouched until the above are exhausted.
+
+---
+
+## Finding 5 — MAE/MFE path study: early exits (take-profit / stop) HURT; holding is the edge
+
+**Date:** 2026-06-28
+**Artifact:** `mae_mfe_analysis.py` (writes `data/results/mae_mfe_8mo_trades.csv`).
+**Scope:** **8-month dev window only** (2023-06-25 → 2024-02-24; book reads capped
+at the dev boundary so the holdout stays untouched), ≥98th tail reversion, 5-min
+trades, **n=541**. Per trade, replay the L1 mid path forward from decision and
+measure the running signed return `r(t)=direction·(mid_t/mid_decision−1)` in bps;
+mid-to-mid (so the net view subtracts the 10 bps fee).
+
+### Baseline reproduces the edge on the dev window
+
+Hold-to-5min: gross **+31.92** / net **+21.92** bps (long +38.1 / short +18.5) —
+essentially identical to the full-train gross +31.91, confirming the 8-month dev
+window faithfully carries the edge (it contains the strong Dec23–Feb24 stretch).
+
+### Trades take huge two-sided excursions, then recover
+
+| within 5 min | mean | median |
+|---|---|---|
+| MFE (best point) | +69.4 | +46.7 |
+| MAE (worst point) | −76.6 | −33.9 |
+| give-back (MFE − final) | +37.4 | — |
+| time-to-MFE-peak | — | 166 s |
+
+90% of trades reach +10 at some point, 69% reach +30, 47% reach +50. The reversion
+plays out largely as a **recovery from intra-window drawdown** (mean trade goes
+from −77 at its worst to +32 by the 5-min mark). Mean path: +20 @3min, +31.9 @5min,
+flat to +33 @30min — **5 min is near-optimal as a fixed cap.**
+
+### Take-profit hurts at every level (right-skewed, persistent winners)
+
+| TP (bps) | %hit | net | vs base +21.92 |
+|---|---|---|---|
+| +20 | 79% | +1.74 | worse |
+| +50 | 47% | +10.01 | worse |
+| +100 | 17% | +14.80 | worse |
+
+No take-profit beats hold-to-5min. Trades that reach +100 within 5 min tend to *end
+even higher*, so any cap sacrifices the fat right tail that carries the edge.
+
+### Stops are catastrophic
+
+A −10 stop → net −6.64; even a −50 stop → net −5.27 (vs +21.92). Winners take real
+heat (winner MAE mean −43 vs loser MAE −154), so any stop tight enough to catch
+losers also cuts winners about to revert. Locking in a drawdown kills the recovery
+that *is* the edge.
+
+### Verdict
+
+**The take-profit / stop family of early exits does not improve expected return —
+it destroys it.** Hold-to-5min is near-optimal. This also explains why the
+Improvement-1 dynamic `RetracementExit` underperformed the fixed exit: TP caps the
+persistent winners, the stop locks in recoverable drawdowns. The path features that
+separate winners from losers (MAE) are only known *after* entry, so they can't trim
+either. **The lever with real headroom is entry-time selection (trimming), not
+exiting** — pursue book-state / cascade-feature entry filters next. One narrow
+untested variant: a *trailing* stop armed only after an extreme MFE (unlikely to
+help given the persistent right tail).

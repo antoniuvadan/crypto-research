@@ -1,5 +1,19 @@
 # Sunday June 28, 2026
 
+- [x] **MAE/MFE path study (exit-timing), 8-month dev window** (`mae_mfe_analysis.py`,
+  n=541). **Early exits (take-profit / stop) HURT — holding is the edge.** Trades take
+  huge two-sided excursions (MFE +69 / MAE −77 within 5min) and the reversion is
+  largely a RECOVERY from intra-window drawdown (mean −77 → +32). So: every fixed
+  take-profit underperforms hold-to-5min (caps the persistent right-tail winners —
+  +100 TP nets only +14.8 vs base +21.9); stops are catastrophic (−50 stop → net
+  −5.3; winners take −43 mean heat). 5min is near-optimal as a fixed cap (path peaks
+  ~5min, flat to 30min). Explains why Improvement-1 RetracementExit lost to fixed.
+  **Conclusion: the lever is TRIMMING (entry-time filters), not exiting** — path
+  features (MAE) that split winners/losers are only known post-entry. Dev baseline
+  reproduces the edge (gross +31.92 ≈ full-train +31.91). See `research.md` Finding 5.
+  - 8-month dev window = 2023-06-25→2024-02-24 ([[project-first-half-only]]); book
+    reads capped at the dev boundary so the holdout is untouched.
+
 - [x] **QA: lookahead audit of the backtest harness — PASS, no lookahead in the
   decision path.** Traced every step:
   - Trailing threshold (`_trailing_quantiles`): slice `values[left:right]` excludes
