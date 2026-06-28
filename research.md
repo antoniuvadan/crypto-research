@@ -135,8 +135,29 @@ P&L decomposition.
 | 2min | −23.24 | +7.90 | +15.72 | +0.084 | ≈2.6 |
 
 ($100k near-identical: −4.62 / −1.87 / +0.79 / +7.16 / +8.09.) Decomposition
-reconciles exactly (`net_reconstructed == net_realized` to 3 decimals). t-stats
-are `net_sharpe × sqrt(969)`.
+reconciles exactly (`net_reconstructed == net_realized` to 3 decimals).
+
+### Significance — Newey-West, not just IID
+
+The IID t-stat (`mean / [std/sqrt(n)]`) overstates significance: liquidation
+events cluster and 1–2 min holds overlap, inducing positive serial correlation in
+the per-trade return series. Newey-West (HAC, automatic bandwidth L=6) corrects
+it. Tool: `significance.py`; output `data/results/{reversion,momentum}_significance.csv`.
+
+| horizon | mean bps | t_IID | **t_NW** |
+|---|---|---|---|
+| 5s   | −4.79 | −4.78 | **−2.78** |
+| 10s  | −1.98 | −1.53 | −0.79 |
+| 30s  | +0.58 | +0.31 | +0.16 |
+| 1min | +6.93 | +2.92 | **+1.43** |
+| 2min | +7.90 | +2.60 | **+1.26** |
+
+HAC SEs are ~1.7× (5s) → ~2.1× (2min) the IID SEs — the inflation grows with
+horizon, exactly as overlap predicts. **The 1–2 min reversion edge is NOT
+significant under Newey-West** (t≈1.3–1.5, p≈0.15): positive point estimate, but
+zero is not rejected. L=6 is the standard auto rule and is conservative — a longer
+bandwidth only widens the SEs. (Momentum, Finding 1, stays decisively negative
+under HAC: t_NW −3.7 to −6.4.)
 
 ### Interpretation
 
@@ -146,27 +167,28 @@ are `net_sharpe × sqrt(969)`.
   and is consistent across both sizes — not a cherry-picked cell.
 - **Fees unchanged at 10 bps round-trip** — still the largest single line and
   still what sinks the short horizons.
-- **Reversion is net-positive only once the gross edge clears 10 bps**: marginal
-  at 30s (+0.6 bps, t≈0.3 — indistinguishable from zero), meaningful at **1min
-  (+6.9, t≈2.9)** and **2min (+7.9, t≈2.6)**.
+- **Net-positive in point estimate only at ≥1 min, and not significant there.**
+  The gross edge (~+15 bps at 1–2 min) clears the 10 bps fee, but the resulting
+  ~+7–8 bps net edge is within HAC error bars.
 - `latency` flips to a tiny cost (+0.24 bps); spread/execution terms are small
   (~1–2 bps) and don't change the conclusion.
 
 ### How much to believe it
 
-Positive but hold loosely:
+Weakly positive — do not trade on this as-is:
+- **Not significant under Newey-West** (1–2 min t≈1.3–1.5). The earlier IID
+  t≈2.6–2.9 was inflated by serial correlation.
 - **In-sample** (training window only) — no out-of-sample confirmation yet.
 - **Optimistic fills** — sweep assumes the historical tape was available and the
   order adds no impact.
-- **Low per-trade Sharpe (~0.09)**; the ~2.6–2.9 t-stats are in-sample and assume
-  IID trades. "Promising," not "established."
 - **Execution/spread terms cross two feeds** (aggTrades vs bookTicker) and are
   timing-sensitive around cascades — lean on `gross_mid_to_mid` (single-feed,
   robust), not the execution bps.
 
-One-liner: the gross reversion edge is real and sizable at 1–2 min (~+15 bps),
-and it's net-positive because that finally exceeds the 10 bps fee — but barely,
-and only at the long end.
+One-liner: the gross reversion edge is real and sizable at 1–2 min (~+15 bps) and
+clears the 10 bps fee in expectation, but the net edge is indistinguishable from
+zero once serial correlation is accounted for. The fee is the binding constraint,
+so the edge can't survive honest error bars until it gets thicker.
 
 ### Next steps
 

@@ -16,11 +16,13 @@
 - [x] Flipped to reversion (`backtest_reversion.py`, `signal_direction_sign=-1`;
   identical 969-event set, opposite trade direction). See `research.md` Finding 2.
   - `gross_mid_to_mid` flips sign almost exactly (+3.2 bp @5s → +15.7 bp @2min),
-    confirming the retracement. Net positive once it clears the 10 bp fee:
-    marginal at 30s (+0.6, t≈0.3), meaningful at 1min (+6.9, t≈2.9) and 2min
-    (+7.9, t≈2.6). Still loses at 5s/10s.
-  - Caveats: in-sample, optimistic fills, low per-trade Sharpe (~0.09), execution
-    bps are cross-feed/timing-sensitive — trust `gross_mid_to_mid`, not spread terms.
+    confirming the retracement. Net positive (point estimate) at 1min (+6.9) and
+    2min (+7.9) once it clears the 10 bp fee; still loses at 5s/10s.
+  - **Newey-West kills the significance** (`significance.py`, HAC L=6): SEs ~2× the
+    IID ones (event clustering + overlap). 1–2min t_NW ≈ 1.3–1.5 (was IID ~2.6–2.9)
+    → NOT significant, p≈0.15. Momentum stays decisively negative (t_NW −3.7…−6.4).
+  - Caveats: in-sample, optimistic fills, execution bps are cross-feed/timing-
+    sensitive — trust `gross_mid_to_mid`, not spread terms. Don't trade as-is.
 
 TODO (next):
 - [ ] **Step 2 — maker entry** (highest leverage): 10 bp taker fee eats ~2/3 of the
