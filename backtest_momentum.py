@@ -22,12 +22,17 @@ import polars as pl
 from backtester import (
     CONTRACT_NOTIONAL_USD,
     DEFAULT_AGG_TRADES_PATH,
+    DEFAULT_BOOK_TICKER_PATH,
     DEFAULT_LATENCY,
     DEFAULT_LIQ_SNAP_PATH,
     DEFAULT_TRADE_NOTIONAL_USD,
     DEFAULT_TRADE_NOTIONAL_USD_GRID,
     TAKER_FEE_RATE,
     Backtester,
+    BookProvider,
+    ExitContext,
+    ExitPolicy,
+    FixedHorizonExit,
     MarketSnapshot,
     Order,
     PortfolioSnapshot,
@@ -369,6 +374,8 @@ def run_liquidation_momentum_model_c_backtests(
     summary_csv_path: Path | None = DEFAULT_MODEL_C_SUMMARY_PATH,
     trades_csv_path: Path | None = DEFAULT_MODEL_C_TRADES_PATH,
     signal_direction_sign: int = 1,
+    exit_policy: ExitPolicy | None = None,
+    book_ticker_dir: Path | None = DEFAULT_BOOK_TICKER_PATH,
     show_progress: bool = False,
 ) -> dict[str, pl.DataFrame]:
     """
@@ -380,6 +387,12 @@ def run_liquidation_momentum_model_c_backtests(
     trade, so fills, fees, and P&L are all simulated on the correct side.
 
     Trade size is explicit notional. Contracts = trade_notional_usd / contract_notional_usd.
+
+    Exits are routed through an ExitPolicy. When exit_policy is None each holding
+    period uses FixedHorizonExit(holding_period), reproducing the static
+    decision_time + holding_period + latency exit exactly. A dynamic policy reads
+    forward L1 microstructure via a BookProvider over book_ticker_dir; that
+    provider is lazy, so the default fixed path loads no bookTicker data.
     """
 
     label = "model-c"
@@ -410,7 +423,13 @@ def run_liquidation_momentum_model_c_backtests(
     trade_rows: list[dict[str, float | str | bool | None]] = []
     total_periods = len(holding_periods)
 
+    # Lazy: loads no bookTicker until a dynamic ExitPolicy actually queries it.
+    book_provider = BookProvider(book_ticker_dir) if book_ticker_dir is not None else None
+
     for period_idx, holding_period in enumerate(holding_periods, start=1):
+        # A caller-supplied policy is used as-is across horizons; otherwise the
+        # static per-horizon exit reproduces the original fixed-clock behavior.
+        policy = exit_policy if exit_policy is not None else FixedHorizonExit(holding_period)
         holding_label = _format_timedelta(holding_period)
         progress = (
             ProgressPrinter(
@@ -437,7 +456,9 @@ def run_liquidation_momentum_model_c_backtests(
             traded_direction = signal_direction_sign * event.direction
             signed_entry_qty = target_contracts * traded_direction
             entry_start = event.decision_time + latency
-            exit_start = event.decision_time + holding_period + latency
+            # Cap the entry sweep at the latest possible exit (decision + max_hold
+            # + latency). For FixedHorizonExit this equals the static exit_start.
+            entry_cap = event.decision_time + policy.max_hold + latency
             entry = _sweep_fill_from_agg_trades(
                 signed_quantity=signed_entry_qty,
                 start_time=entry_start,
@@ -446,13 +467,24 @@ def run_liquidation_momentum_model_c_backtests(
                 prices=prices,
                 quantities=quantities,
                 is_buyer_maker=is_buyer_maker,
-                max_end_time=exit_start,
+                max_end_time=entry_cap,
             )
 
             if entry.filled_quantity == 0 or entry.avg_price is None:
                 if progress is not None:
                     progress.update(event_idx, force=event_idx == len(events))
                 continue
+
+            # Policy chooses the close-decision time; latency then delays the exit
+            # sweep, mirroring entry. Fixed policy => decision + holding + latency.
+            exit_context = ExitContext(
+                decision_time=event.decision_time,
+                direction=traded_direction,
+                holding_period=holding_period,
+                latency=latency,
+                entry=entry,
+            )
+            exit_start = policy.exit_trigger_time(exit_context, book_provider) + latency
 
             exit = _sweep_fill_from_agg_trades(
                 signed_quantity=-entry.filled_quantity,

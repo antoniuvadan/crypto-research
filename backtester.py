@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sys
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Protocol
+from typing import Callable, Iterable, Iterator, Protocol
 
 import numpy as np
 import polars as pl
@@ -100,10 +101,21 @@ class MarketSnapshot:
     bid_qty: float
     ask_price: float
     ask_qty: float
+    micro_price: float | None = None
 
     @property
     def mid_price(self) -> float:
         return (self.bid_price + self.ask_price) / 2.0
+
+    @property
+    def spread(self) -> float:
+        return self.ask_price - self.bid_price
+
+    @property
+    def book_imbalance(self) -> float:
+        """(bid_qty - ask_qty) / (bid_qty + ask_qty) in [-1, 1]; +ve = bid-heavy."""
+        total = self.bid_qty + self.ask_qty
+        return (self.bid_qty - self.ask_qty) / total if total > 0 else 0.0
 
 
 @dataclass(frozen=True)
@@ -548,3 +560,224 @@ def _datetime_to_ns(value: datetime | None) -> int:
     if value is None:
         raise ValueError("datetime value cannot be None")
     return int(value.timestamp() * 1_000_000_000)
+
+
+# ---------------------------------------------------------------------------
+# Book-state access (L1 microstructure) and the exit-policy seam.
+#
+# These exist so decision logic (e.g. a state-dependent exit) can read the L1
+# book/flow at and after a trade, instead of relying on a fixed clock. The Model
+# C runner is wired to drive exits through an ExitPolicy; the default
+# FixedHorizonExit reproduces the current decision_time + holding_period behavior
+# exactly, so nothing changes until a dynamic policy is supplied.
+# ---------------------------------------------------------------------------
+
+BOOK_TICKER_DAY_COLS = [
+    "event_time_datetime",
+    "best_bid_price",
+    "best_bid_qty",
+    "best_ask_price",
+    "best_ask_qty",
+    "mid_price",
+    "micro_price",
+]
+
+
+def _book_ticker_day_path(book_ticker_dir: Path, d: date) -> Path:
+    return book_ticker_dir / f"BTCUSD_PERP-bookTicker-{d.isoformat()}.parquet"
+
+
+@dataclass(frozen=True)
+class BookView:
+    """Indexed, in-memory L1 book over a time range; queryable by timestamp.
+
+    Backed by parallel numpy arrays (plus the original datetimes for cheap
+    snapshot construction) so point and window lookups are binary searches, the
+    same access pattern as _sweep_fill_from_agg_trades.
+    """
+
+    times_ns: np.ndarray
+    times: list[datetime]
+    bid_price: np.ndarray
+    bid_qty: np.ndarray
+    ask_price: np.ndarray
+    ask_qty: np.ndarray
+    mid_price: np.ndarray
+    micro_price: np.ndarray
+
+    @classmethod
+    def from_frame(cls, df: pl.DataFrame) -> "BookView":
+        df = df.sort("event_time_datetime")
+        return cls(
+            times_ns=df["event_time_datetime"].cast(pl.Int64).to_numpy(),
+            times=df["event_time_datetime"].to_list(),
+            bid_price=df["best_bid_price"].to_numpy(),
+            bid_qty=df["best_bid_qty"].to_numpy(),
+            ask_price=df["best_ask_price"].to_numpy(),
+            ask_qty=df["best_ask_qty"].to_numpy(),
+            mid_price=df["mid_price"].to_numpy(),
+            micro_price=df["micro_price"].to_numpy(),
+        )
+
+    @classmethod
+    def empty(cls) -> "BookView":
+        f = np.empty(0, dtype=float)
+        return cls(np.empty(0, dtype=np.int64), [], f, f.copy(), f.copy(), f.copy(), f.copy(), f.copy())
+
+    def __len__(self) -> int:
+        return len(self.times_ns)
+
+    def _snapshot(self, idx: int) -> MarketSnapshot:
+        return MarketSnapshot(
+            time=self.times[idx],
+            bid_price=float(self.bid_price[idx]),
+            bid_qty=float(self.bid_qty[idx]),
+            ask_price=float(self.ask_price[idx]),
+            ask_qty=float(self.ask_qty[idx]),
+            micro_price=float(self.micro_price[idx]),
+        )
+
+    def as_of(self, t: datetime) -> MarketSnapshot | None:
+        """Last L1 update at or before t (backward as-of). None if t precedes all."""
+        if len(self) == 0:
+            return None
+        idx = int(np.searchsorted(self.times_ns, _datetime_to_ns(t), side="right")) - 1
+        return self._snapshot(idx) if idx >= 0 else None
+
+    def slice_window(self, start: datetime, end: datetime) -> "BookView":
+        """All updates with start <= time <= end (a cheap array-slice view)."""
+        if len(self) == 0:
+            return self
+        lo = int(np.searchsorted(self.times_ns, _datetime_to_ns(start), side="left"))
+        hi = int(np.searchsorted(self.times_ns, _datetime_to_ns(end), side="right"))
+        return BookView(
+            times_ns=self.times_ns[lo:hi],
+            times=self.times[lo:hi],
+            bid_price=self.bid_price[lo:hi],
+            bid_qty=self.bid_qty[lo:hi],
+            ask_price=self.ask_price[lo:hi],
+            ask_qty=self.ask_qty[lo:hi],
+            mid_price=self.mid_price[lo:hi],
+            micro_price=self.micro_price[lo:hi],
+        )
+
+    def snapshots(self) -> Iterator[MarketSnapshot]:
+        """Iterate the updates in time order (for a forward scan of the book)."""
+        for idx in range(len(self)):
+            yield self._snapshot(idx)
+
+    @classmethod
+    def concat(cls, views: list["BookView"]) -> "BookView":
+        views = [v for v in views if len(v) > 0]
+        if not views:
+            return cls.empty()
+        if len(views) == 1:
+            return views[0]
+        return cls(
+            times_ns=np.concatenate([v.times_ns for v in views]),
+            times=[t for v in views for t in v.times],
+            bid_price=np.concatenate([v.bid_price for v in views]),
+            bid_qty=np.concatenate([v.bid_qty for v in views]),
+            ask_price=np.concatenate([v.ask_price for v in views]),
+            ask_qty=np.concatenate([v.ask_qty for v in views]),
+            mid_price=np.concatenate([v.mid_price for v in views]),
+            micro_price=np.concatenate([v.micro_price for v in views]),
+        )
+
+
+class BookProvider:
+    """Lazy, day-batched access to L1 bookTicker, cached by calendar day.
+
+    bookTicker is one parquet per UTC day (~4.6M rows each), far too large to
+    hold the full study period in memory, so days are loaded on first query and
+    an LRU of the most recently used days is kept. Construction does no I/O — a
+    runner can always build one and pay nothing if the active ExitPolicy never
+    queries the book.
+    """
+
+    def __init__(
+        self,
+        book_ticker_dir: Path = DEFAULT_BOOK_TICKER_PATH,
+        cache_days: int = 3,
+    ) -> None:
+        self.book_ticker_dir = book_ticker_dir
+        self.cache_days = max(cache_days, 1)
+        self._cache: "OrderedDict[date, BookView]" = OrderedDict()
+
+    def _day_view(self, d: date) -> BookView:
+        cached = self._cache.get(d)
+        if cached is not None:
+            self._cache.move_to_end(d)
+            return cached
+        path = _book_ticker_day_path(self.book_ticker_dir, d)
+        view = (
+            BookView.from_frame(pl.read_parquet(path, columns=BOOK_TICKER_DAY_COLS))
+            if path.exists()
+            else BookView.empty()
+        )
+        self._cache[d] = view
+        while len(self._cache) > self.cache_days:
+            self._cache.popitem(last=False)
+        return view
+
+    def as_of(self, t: datetime) -> MarketSnapshot | None:
+        return self._day_view(t.date()).as_of(t)
+
+    def window(self, start: datetime, end: datetime) -> BookView:
+        """L1 updates with start <= time <= end, spanning day files as needed."""
+        if end < start:
+            return BookView.empty()
+        days: list[date] = []
+        d = start.date()
+        last = end.date()
+        while d <= last:
+            days.append(d)
+            d += timedelta(days=1)
+        return BookView.concat([self._day_view(day).slice_window(start, end) for day in days])
+
+
+@dataclass(frozen=True)
+class ExitContext:
+    """State handed to an ExitPolicy after entry, to decide when to close.
+
+    decision_time / direction / latency describe the trade; entry is the realized
+    entry fill (avg_price, end_time, filled_quantity, ...). holding_period is the
+    cell's configured horizon — fixed policies use it directly, dynamic policies
+    may treat it as a default or ignore it in favor of their own max_hold cap.
+    """
+
+    decision_time: datetime
+    direction: int  # traded direction: +1 long, -1 short
+    holding_period: timedelta
+    latency: timedelta
+    entry: SweepExecution
+
+
+class ExitPolicy(Protocol):
+    """Decides when an open position is closed.
+
+    max_hold bounds how long a position may stay open; the runner uses it to cap
+    the entry sweep and (for dynamic policies) to bound the forward book scan.
+    exit_trigger_time returns the time the close decision is made — the runner
+    adds latency before the exit sweep begins, mirroring entry. Dynamic policies
+    read forward microstructure via the BookProvider; fixed ones ignore it.
+    """
+
+    @property
+    def max_hold(self) -> timedelta: ...
+
+    def exit_trigger_time(self, ctx: ExitContext, book: BookProvider | None) -> datetime: ...
+
+
+@dataclass(frozen=True)
+class FixedHorizonExit:
+    """Close at decision_time + holding_period (the current static behavior)."""
+
+    holding_period: timedelta
+
+    @property
+    def max_hold(self) -> timedelta:
+        return self.holding_period
+
+    def exit_trigger_time(self, ctx: ExitContext, book: BookProvider | None = None) -> datetime:
+        return ctx.decision_time + self.holding_period
