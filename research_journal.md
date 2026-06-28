@@ -52,11 +52,18 @@
   abnormal. Decisively kills the bull-drift worry. See `research.md` Finding 4 →
   "Market-neutral".
 
+- [x] **P&L-decomposed the 5min trades** (`pnl_decomposition.py`; extended its
+  HOLDING_ORDER like significance.py). **Edge is the signal, not execution.** 5min
+  net +23.67 ≈ gross_mid_to_mid (+31.91) − 10 bp fee; latency +0.24, spread terms
+  slightly *favorable* (−2.0 bp combined). Three measures of the signal agree:
+  gross-mid +31.91 ≈ market-neutral raw +31.96 ≈ fill-gross +33.67. Fees are the
+  dominant friction. Caveat: favorable spread = optimistic sweep fills; a
+  conservative ~2 bp/side taker cost gives ~+18 bp net (honest floor). See
+  `research.md` Finding 4 → "P&L decomposition".
+
 TODO (next):
-- [ ] **P&L-decompose the 5min trades** — confirm the edge is `gross_mid_to_mid`,
-      not an execution/spread artifact (`pnl_decomposition.py`; may need its
-      HOLDING_ORDER extended like significance.py).
-- [ ] Maker entry (Step 2) — orthogonal ~3–6 bp round-trip on top of the +27 net.
+- [ ] **Maker entry (Step 2)** — fees (10 bp) are now the clear binding friction;
+      maker-in/taker-out ~3 bp, maker/maker ~6 bp round-trip on top of the +23.7 net.
 - [ ] **TRUE OOS** on the test period (2024-06-25 → 2024-10-14) — *final run only*,
       keep untouched until the above are done.
 - [ ] Improvement 3 / Step 2 — maker entry (kill the ~10 bp fee); orthogonal,

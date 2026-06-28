@@ -414,12 +414,38 @@ Caveat: the drift is estimated from a single 60-min pre-window ending 5 min befo
 decision; window-length sensitivity is untested (the adverse-trend sign is
 mechanically expected, though, since cascades follow sell-offs).
 
+### P&L decomposition — the edge is the signal, not execution
+
+`pnl_decomposition.py --trades …reversion_long_horizons_trades.csv` splits the net
+per trade into additive bps (costs shown positive-and-subtracted; a *negative*
+spread term means the fill beat mid):
+
+| horizon | n | gross_mid_to_mid | latency | spread_entry | spread_exit | fees | net |
+|---|---|---|---|---|---|---|---|
+| 1min  | 969 | 14.58 | 0.24 | −0.83 | −1.77 | 10 | 6.93 |
+| **5min**  | 969 | **31.91** | 0.24 | −0.83 | −1.17 | 10 | **23.67** |
+| 30min | 969 | 31.25 | 0.24 | −0.83 | −1.56 | 10 | 23.40 |
+| 60min | 965 | 20.48 | 0.23 | −0.81 | −1.21 | 10 | 12.27 |
+
+The 5-min net is essentially `gross_mid_to_mid (+31.91) − 10 bps fee`. Execution is
+negligible: latency +0.24, and the spread terms are slightly *favorable*
+(−2.0 bps combined). Three independent measures of the signal agree: gross-mid
+**+31.91** ≈ market-neutral raw signal **+31.96** ≈ fill-based gross **+33.67**. The
+mid genuinely retraces ~32 bps over 5 min — not a spread/book-walk artifact.
+Reconciliation is exact (net_reconstructed 23.674 ≈ net_realized 23.670).
+
+- **Fees (10 bps) are the dominant friction** — the obvious next lever is maker entry.
+- **Caveat:** the favorable spread reflects the optimistic sweep-fill assumption. A
+  conservative ~2 bps/side taker cost instead gives ~**+18 bps** net
+  (31.9 − 0.24 − 4 − 10) — still strongly positive, but the honest floor.
+
 ### Next steps
 
-1. ~~Market-neutralize~~ **done** (above): abnormal +37.36 bps, t_NW +6.59 — the
-   edge is alpha fighting an adverse trend, not drift.
-2. **P&L-decompose the 5-min trades** to confirm the edge is `gross_mid_to_mid`
-   (signal), not an execution/spread artifact.
-3. Maker entry (Step 2) — orthogonal ~3–6 bps round-trip on top.
+1. ~~Market-neutralize~~ **done**: abnormal +37.36 bps, t_NW +6.59 — alpha fighting
+   an adverse trend, not drift.
+2. ~~P&L-decompose~~ **done** (above): the 5-min edge is `gross_mid_to_mid`
+   (+31.9 bps), execution negligible. Fees are the binding friction.
+3. **Maker entry (Step 2)** — the dominant 10 bps fee is now the clear target;
+   maker-in/taker-out saves ~3 bps, maker/maker ~6 bps round-trip.
 4. **True out-of-sample** on the held-out test period (2024-06-25 → 2024-10-14) —
    final-run only; keep it untouched until the above are exhausted.
