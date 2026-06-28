@@ -479,6 +479,7 @@ def run_liquidation_momentum_model_c_backtests(
             # sweep, mirroring entry. Fixed policy => decision + holding + latency.
             exit_context = ExitContext(
                 decision_time=event.decision_time,
+                liquidation_time=event.liquidation_time,
                 direction=traded_direction,
                 holding_period=holding_period,
                 latency=latency,

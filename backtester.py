@@ -741,12 +741,15 @@ class ExitContext:
     """State handed to an ExitPolicy after entry, to decide when to close.
 
     decision_time / direction / latency describe the trade; entry is the realized
-    entry fill (avg_price, end_time, filled_quantity, ...). holding_period is the
-    cell's configured horizon — fixed policies use it directly, dynamic policies
-    may treat it as a default or ignore it in favor of their own max_hold cap.
+    entry fill (avg_price, end_time, filled_quantity, ...). liquidation_time is
+    the underlying event time (decision_time minus the signal's seconds_after),
+    which dynamic policies use to anchor a pre-cascade reference. holding_period
+    is the cell's configured horizon — fixed policies use it directly, dynamic
+    policies may treat it as a default or ignore it in favor of their max_hold cap.
     """
 
     decision_time: datetime
+    liquidation_time: datetime
     direction: int  # traded direction: +1 long, -1 short
     holding_period: timedelta
     latency: timedelta
@@ -781,3 +784,64 @@ class FixedHorizonExit:
 
     def exit_trigger_time(self, ctx: ExitContext, book: BookProvider | None = None) -> datetime:
         return ctx.decision_time + self.holding_period
+
+
+@dataclass(frozen=True)
+class RetracementExit:
+    """State-dependent reversion exit driven by the L1 mid path.
+
+    A liquidation cascade dislocates the mid from `mid_pre` (sampled pre_lookback
+    before the liquidation) to `mid_decision` (at decision_time). A reversion
+    trade is opened expecting the mid to retrace from mid_decision back toward
+    mid_pre. This policy closes the position at the first L1 update that shows:
+
+      * take-profit -- the mid retraces `take_profit_frac` of the displacement
+        (mid_decision -> mid_pre) in the favorable direction;
+      * stop -- the mid extends `stop_frac` of the displacement *beyond*
+        mid_decision (the cascade keeps running against the trade);
+      * time cap -- neither fires within `max_hold`. The time cap is also the
+        fallback when a reference mid is missing or the observed dislocation is
+        not in the expected reversion direction (so no sensible levels exist).
+
+    The returned trigger is the *observation* time; the runner adds latency before
+    the exit sweep, mirroring entry. Reads only the L1 book via the BookProvider
+    seam -- no look-ahead beyond the book updates up to each candidate exit.
+    """
+
+    max_hold: timedelta = timedelta(minutes=2)
+    take_profit_frac: float = 0.5
+    stop_frac: float = 1.0
+    pre_lookback: timedelta = timedelta(seconds=5)
+
+    def exit_trigger_time(self, ctx: ExitContext, book: BookProvider | None) -> datetime:
+        time_cap = ctx.decision_time + self.max_hold
+        if book is None:
+            return time_cap
+
+        pre = book.as_of(ctx.liquidation_time - self.pre_lookback)
+        at_decision = book.as_of(ctx.decision_time)
+        if pre is None or at_decision is None:
+            return time_cap
+
+        mid_pre = pre.mid_price
+        mid_decision = at_decision.mid_price
+        favorable = mid_pre - mid_decision  # reversion points back toward mid_pre
+        direction = ctx.direction  # +1 long, -1 short
+
+        # The dislocation must sit in the expected reversion direction (a long
+        # reversion needs mid_pre above mid_decision, and vice versa) for the
+        # retracement/stop levels to be meaningful; otherwise hold to the cap.
+        if direction * favorable <= 0:
+            return time_cap
+
+        mid_target = mid_decision + self.take_profit_frac * favorable
+        mid_stop = mid_decision - self.stop_frac * favorable
+
+        scan_start = ctx.entry.end_time or (ctx.decision_time + ctx.latency)
+        window = book.window(scan_start, time_cap)
+        for mid_t, t in zip(window.mid_price, window.times):
+            if direction * (mid_t - mid_target) >= 0:  # take-profit reached
+                return t
+            if direction * (mid_t - mid_stop) <= 0:  # stop hit
+                return t
+        return time_cap
