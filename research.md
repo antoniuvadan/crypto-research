@@ -347,6 +347,43 @@ not-significant 1–2 min reversion into a **+23.7 bps net edge with t_NW ≈ 4.
 truncating it. Now de-risk: out-of-sample, market-neutralization, and the maker-fee
 attack (which would lift +23.7 toward ~+27 bps).
 
+### Sub-period stability across train months (NOT true OOS)
+
+The 5-min hold was chosen on the full training aggregate, so no train month is a
+true out-of-sample test — that is reserved for the untouched test period
+(2024-06-25 → 2024-10-14, for the final run). As a sub-period stability check, the
+5-min tail trades were sliced by calendar month (the trailing-7d threshold is
+causal, so each month's trades equal a standalone-with-warmup run):
+
+| month | n | net_bps | t_NW | long_net | short_net |
+|---|---|---|---|---|---|
+| 2023-06 | 35  | −17.34 | −0.94 | −16.75 | −19.33 |
+| 2023-07 | 45  | +12.37 | +1.48 | +9.12  | +38.30 |
+| 2023-08 | 51  | −5.62  | −0.44 | +2.13  | −28.26 |
+| 2023-09 | 30  | +15.10 | +3.08 | +13.74 | +18.86 |
+| 2023-10 | 69  | +19.39 | +0.90 | +29.43 | +15.57 |
+| 2023-11 | 64  | +20.44 | +2.59 | +41.39 | −4.84  |
+| 2023-12 | 93  | +39.44 | +1.93 | +52.37 | +2.26  |
+| 2024-01 | 89  | +65.67 | +3.65 | +61.10 | +94.97 |
+| 2024-02 | 122 | +18.41 | +1.51 | +12.28 | +29.27 |
+| 2024-03 | 134 | +46.61 | +3.05 | +50.54 | +31.01 |
+| 2024-04 | 91  | +14.64 | +0.71 | +9.20  | +54.20 |
+| 2024-05 | 99  | +2.95  | +0.33 | +15.26 | −56.44 |
+| 2024-06 | 47  | +11.62 | +1.95 | +12.77 | −5.25  |
+
+- **Broad, not one lucky month:** 11/13 months net-positive; longs positive in all
+  but the 5-day partial first month (2023-06). The two negatives are 2023-06 (tiny
+  n) and 2023-08 (−5.6).
+- **But time-varying and regime-concentrated:** clearly strongest through the
+  late-2023 → early-2024 bull run (Dec +39, Jan +66, Mar +47), weak/negative over
+  summer 2023. The full-train +23.7 is partly carried by that window.
+- **Per-month inference is low-powered** (n 30–134): only a few months are
+  individually significant under HAC. The short book is especially noisy
+  month-to-month (e.g. 2024-05 short −56).
+- **Caveat for the real OOS:** the regime-concentration means the test period
+  (Jun–Oct 2024), if a different regime, is a genuine test the in-sample number may
+  not survive — exactly why it is being kept untouched.
+
 ### Next steps
 
 1. **Out-of-sample** confirmation of the 5-min tail edge (held-out period; ideally

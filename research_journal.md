@@ -31,10 +31,22 @@
   lose. Strongest result so far, but in-sample / optimistic fills / not yet
   market-neutralized.
 
+- [x] **Sub-period stability of the 5min tail edge** (NOT true OOS — used train
+  months, kept the test period untouched). Sliced the Finding-4 5min trades by
+  calendar month (causal threshold ⇒ slice == standalone run). **11/13 train months
+  net-positive**, longs +ve in all but the 5-day partial first month. But the edge
+  is **time-varying / regime-concentrated**: strongest Dec23–Mar24 bull run (+39 to
+  +66 bp), weak/negative over summer 2023; per-month n=30–134 so per-month t_NW is
+  low-powered. Regime-concentration is a real risk for the real OOS (test = Jun–Oct
+  2024, a possibly-different regime — that's why it stays untouched). See
+  `research.md` Finding 4 → "Sub-period stability".
+
 TODO (next):
-- [ ] **De-risk Finding 4** — (a) OOS on a held-out / non-bull period; (b)
+- [ ] **De-risk Finding 4** — (a) TRUE OOS on the held-out test period
+      (2024-06-25 → 2024-10-14) — but only as the *final* run; (b)
       market-neutralize (subtract contemporaneous BTC return over each hold) to
-      split reversion alpha from drift; (c) P&L-decompose the 5min trades to confirm
+      split reversion alpha from drift — esp. important given the regime-
+      concentration; (c) P&L-decompose the 5min trades to confirm
       `gross_mid_to_mid` is the source.
 - [ ] Improvement 3 / Step 2 — maker entry (kill the ~10 bp fee); orthogonal,
       lifts the 5min net toward ~+27 bp.
