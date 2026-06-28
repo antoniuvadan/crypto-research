@@ -384,12 +384,42 @@ causal, so each month's trades equal a standalone-with-warmup run):
   (Jun–Oct 2024), if a different regime, is a genuine test the in-sample number may
   not survive — exactly why it is being kept untouched.
 
+### Market-neutral (abnormal return) — the edge is alpha, not drift
+
+A single-BTC-asset directional trade can't be hedged against BTC over the same
+window (that is identically its own return), so this uses an **event-study
+abnormal return**: subtract the trend the price was already on, estimated
+*causally* from a pre-cascade window. Per trade (`market_neutralize.py`, all from
+L1 mids): `signal = direction·(mid[dec+5m]/mid[dec]−1)`; `normal = direction·`(mid
+drift over the clean window [dec−65m, dec−5m] projected onto 5 min); `abnormal =
+signal − normal`.
+
+| component | mean bps |
+|---|---|
+| raw mid signal | +31.96 |
+| normal (trend) removed | **−5.40** |
+| **abnormal (alpha)** | **+37.36**  (t_IID +13.0, **t_NW +6.59**, auto L=6) |
+| abnormal − 10 bps fee | **+27.36** |
+
+The trend component is **negative**: sell cascades are the culmination of a
+sell-off, so price drifts *down into* the event and the reversion trade bets
+*against* the local trend. Removing that adverse trend makes the alpha **larger**,
+not smaller (+31.96 → +37.36) — the opposite of the bull-drift worry. The edge is
+fighting drift, not riding it. Both directions revert against trend (long +41.05,
+short +26.80 abnormal bps), and **12/13 train months are net-positive on abnormal**
+(only the 5-day partial 2023-06 negative). Sanity: raw mid signal +31.96 ≈ the
+fill-based gross +33.67 above.
+
+Caveat: the drift is estimated from a single 60-min pre-window ending 5 min before
+decision; window-length sensitivity is untested (the adverse-trend sign is
+mechanically expected, though, since cascades follow sell-offs).
+
 ### Next steps
 
-1. **Out-of-sample** confirmation of the 5-min tail edge (held-out period; ideally
-   spanning a non-bull regime).
-2. **Market-neutralize** — subtract the contemporaneous BTC return over each hold
-   to separate reversion alpha from drift.
-3. Maker entry (Step 2) — orthogonal ~3–6 bps round-trip on top.
-4. P&L-decompose the 5-min trades to confirm the edge is `gross_mid_to_mid`
+1. ~~Market-neutralize~~ **done** (above): abnormal +37.36 bps, t_NW +6.59 — the
+   edge is alpha fighting an adverse trend, not drift.
+2. **P&L-decompose the 5-min trades** to confirm the edge is `gross_mid_to_mid`
    (signal), not an execution/spread artifact.
+3. Maker entry (Step 2) — orthogonal ~3–6 bps round-trip on top.
+4. **True out-of-sample** on the held-out test period (2024-06-25 → 2024-10-14) —
+   final-run only; keep it untouched until the above are exhausted.

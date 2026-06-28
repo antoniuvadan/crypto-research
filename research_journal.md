@@ -41,13 +41,24 @@
   2024, a possibly-different regime — that's why it stays untouched). See
   `research.md` Finding 4 → "Sub-period stability".
 
+- [x] **Market-neutralized the 5min tail trades** (`market_neutralize.py`,
+  event-study abnormal return: signal minus the causal pre-cascade trend over a
+  60min window). **Edge is alpha, not drift — and the trend was AGAINST it.** The
+  pre-event drift is negative (−5.4 bp in trade direction: cascades follow
+  sell-offs, so price falls into the event and the reversion bets against the local
+  downtrend), so removing it *raises* the alpha: raw mid signal +31.96 → **abnormal
+  +37.36 bp** (t_IID +13.0, **t_NW +6.59**), net-tradeable +27.36. Both directions
+  revert against trend (long +41.1, short +26.8); 12/13 train months +ve on
+  abnormal. Decisively kills the bull-drift worry. See `research.md` Finding 4 →
+  "Market-neutral".
+
 TODO (next):
-- [ ] **De-risk Finding 4** — (a) TRUE OOS on the held-out test period
-      (2024-06-25 → 2024-10-14) — but only as the *final* run; (b)
-      market-neutralize (subtract contemporaneous BTC return over each hold) to
-      split reversion alpha from drift — esp. important given the regime-
-      concentration; (c) P&L-decompose the 5min trades to confirm
-      `gross_mid_to_mid` is the source.
+- [ ] **P&L-decompose the 5min trades** — confirm the edge is `gross_mid_to_mid`,
+      not an execution/spread artifact (`pnl_decomposition.py`; may need its
+      HOLDING_ORDER extended like significance.py).
+- [ ] Maker entry (Step 2) — orthogonal ~3–6 bp round-trip on top of the +27 net.
+- [ ] **TRUE OOS** on the test period (2024-06-25 → 2024-10-14) — *final run only*,
+      keep untouched until the above are done.
 - [ ] Improvement 3 / Step 2 — maker entry (kill the ~10 bp fee); orthogonal,
       lifts the 5min net toward ~+27 bp.
 - [ ] Improvement 2 (book-aware entry gating/sizing) — inner-region *size* selection
