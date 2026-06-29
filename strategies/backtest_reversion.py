@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 """
-Reversion with a STATE-DEPENDENT exit (Improvement 1) over the training window.
+Backtest the REVERSION variant of the liquidation signal — trade *against* the
+liquidating flow — over the training window, mirroring the momentum Model C grid.
 
-Same liquidation signal and reversion direction as backtest_reversion.py
-(`signal_direction_sign=-1`), but the fixed holding-period grid is replaced by a
-single `RetracementExit` policy that closes each position when the L1 mid path
-says the reversion is done: a take-profit when the mid retraces a fraction of the
-cascade displacement, a stop when the cascade keeps running, or a max-hold time
-cap. The exit reads the book through the lazy `BookProvider` seam.
+Reuses `backtester.run_liquidation_momentum_model_c_backtests` with
+`signal_direction_sign=-1`. The event set (percentile, trailing window, +/-5s
+window) is identical to the momentum run, so the same signal events fire; only
+the trade direction is flipped. To keep events identical across both trade sizes
+and avoid recomputing the expensive +/-5s aggregate-quantity column per cell, the
+data is loaded once and the column is precomputed a single time.
 
-The event set is identical to the fixed-exit baseline (the +/-5s aggregate-
-quantity column is precomputed once), so the dynamic-exit trades line up one-to-
-one with `reversion_model_c_trades.csv` for a clean A/B on the same events.
-
-Outputs (same schema as the other Model C CSVs):
-  data/results/reversion_dynamic_exit_summary.csv
-  data/results/reversion_dynamic_exit_trades.csv
+Outputs (same schema as the momentum CSVs):
+  data/results/reversion_model_c_summary.csv
+  data/results/reversion_model_c_trades.csv
 
 Usage:
-  python backtest_reversion_dynamic.py
+  python backtest_reversion.py
 """
 
 from __future__ import annotations
+
+# This module lives in strategies/; put the repo root on sys.path so the shared
+# engine (backtester) resolves when run as a script from the repo root.
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 from datetime import date, timedelta
 from pathlib import Path
@@ -33,22 +37,16 @@ import backtest_momentum as bm
 
 START_DATE = date(2023, 6, 25)
 END_DATE = date(2024, 6, 24)
-
-# Exit policy: cap holds at 2 min (the horizon where the gross reversion edge was
-# largest in Finding 2), take profit at half the cascade displacement, stop if the
-# cascade extends a full displacement further, pre-cascade mid sampled 5s before
-# the liquidation (the start of the +/-5s signal window).
-MAX_HOLD = timedelta(minutes=2)
-EXIT_POLICY = bt.RetracementExit(
-    max_hold=MAX_HOLD,
-    take_profit_frac=0.5,
-    stop_frac=1.0,
-    pre_lookback=timedelta(seconds=5),
+HOLDING_PERIODS = (
+    timedelta(seconds=5),
+    timedelta(seconds=10),
+    timedelta(seconds=30),
+    timedelta(minutes=1),
+    timedelta(minutes=2),
 )
-
 SIZES = bt.DEFAULT_TRADE_NOTIONAL_USD_GRID  # (50_000, 100_000)
-SUMMARY_OUT = Path("data/results/reversion_dynamic_exit_summary.csv")
-TRADES_OUT = Path("data/results/reversion_dynamic_exit_trades.csv")
+SUMMARY_OUT = Path("data/results/reversion_model_c_summary.csv")
+TRADES_OUT = Path("data/results/reversion_model_c_trades.csv")
 
 
 def main() -> None:
@@ -64,7 +62,7 @@ def main() -> None:
     )
 
     # Precompute the +/-5s same-direction aggregate-quantity column once so both
-    # size runs build the same event set as the fixed-exit baseline.
+    # size runs build an identical event set without recomputing it.
     agg_qty = bm._same_direction_aggregate_quantities(
         liq_df=liq, trades_df=agg, seconds_before=5, seconds_after=5
     )
@@ -76,10 +74,9 @@ def main() -> None:
         result = bm.run_liquidation_momentum_model_c_backtests(
             liq_snap=liq,
             agg_trades=agg,
-            holding_periods=(MAX_HOLD,),  # single cell; the cap matches the policy
+            holding_periods=HOLDING_PERIODS,
             trade_notional_usd=size,
             signal_direction_sign=-1,  # reversion: trade against the flow
-            exit_policy=EXIT_POLICY,
             summary_csv_path=None,
             trades_csv_path=None,
             show_progress=True,

@@ -39,6 +39,13 @@ Usage:
 
 from __future__ import annotations
 
+# This module lives in strategies/; put the repo root on sys.path so the shared
+# engine (backtester, significance) resolves when run as a script from the repo root.
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path

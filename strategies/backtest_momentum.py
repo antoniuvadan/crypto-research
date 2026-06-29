@@ -11,6 +11,13 @@ Run the Model C sensitivity grid over the training window:
 
 from __future__ import annotations
 
+# This module lives in strategies/; put the repo root on sys.path so the shared
+# engine (backtester) resolves when run as a script from the repo root.
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
