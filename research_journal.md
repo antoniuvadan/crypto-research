@@ -1,5 +1,16 @@
 # Sunday June 28, 2026
 
+- [x] **Baked the causal trim filter + within-train OOS validation** (`apply_trim_filter.py`).
+  Filter: keep a ≥98th cascade iff decision-time displacement > trailing-30d median of
+  past tail-event displacements (causal, adaptive; fixed from dev). Trimming only drops
+  events → masking existing trades == baking into signal. **First OOS validation, PASSES:**
+  - DEV: all +24.15 (t_NW 3.55) → filtered +34.68 (64% kept, t_NW 3.59).
+  - HOLDOUT (within-train OOS, 2024-02-25→2024-06-24): all +23.06 (t_NW 2.76) — base
+    edge HOLDS OOS; filtered **+51.01** (36% kept, t_NW **3.22**) — filter generalizes,
+    raises mean AND significance. Adaptive keep-rate (64% dev / 36% holdout) = trailing
+    median tightening in calm stretches. **Within-train OOS only — TEST PERIOD UNTOUCHED.**
+    n=156 filtered holdout getting small; higher per-trade variance. See `research.md` Finding 7.
+
 - [x] **Entry-filter (trimming) analysis, 8-month dev** (`entry_filter_analysis.py`,
   n=541). **The edge lives in violent cascades; trimming the calm ones ~doubles
   per-trade return.** Causal decision-time feature scan: strongest predictors are

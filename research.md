@@ -585,8 +585,65 @@ holdout before trusting it.**
 
 ### Next steps
 
-1. Bake a causal (trailing-median) displacement/vol filter into the signal and
-   re-measure net + Newey-West on dev (does trimming improve significance, given
-   higher per-trade variance?).
+1. ~~Bake a causal (trailing-median) displacement filter and re-measure~~ **done →
+   Finding 7** (validates, including within-train OOS).
 2. Maker entry (Step 2) — orthogonal, on top of the trimmed book.
-3. Validation pass on the 2nd-half-of-train holdout, then the final test-period OOS.
+3. Final test-period OOS — reserved, final run only.
+
+---
+
+## Finding 7 — Causal trim filter holds up out-of-sample (within-train holdout)
+
+**Date:** 2026-06-28
+**Artifact:** `apply_trim_filter.py` (writes `data/results/trim_filter_trades.csv`).
+**Scope:** full-train 5-min tail trades split into **dev** (2023-06-25 → 2024-02-24)
+and the **within-train holdout** (2024-02-25 → 2024-06-24); the test period
+(2024-06-25 →) is *not* touched. Trimming only drops events, so masking the existing
+trades is exactly equivalent to baking the filter into the signal.
+
+### The filter (causal, fixed from dev)
+
+Keep a ≥98th cascade iff its decision-time **displacement** exceeds a **trailing
+30-day median** of past tail-event displacements (≥15 prior events, else keep — a
+causal cold-start). Adaptive and look-ahead-free; parameters fixed from F6, no
+holdout tuning.
+
+### Results
+
+| cell | n | mean net bps | t_IID | t_NW |
+|---|---|---|---|---|
+| DEV all | 541 | +24.15 | +6.75 | +3.55 |
+| DEV filtered (64% kept) | 347 | **+34.68** | +6.65 | +3.59 |
+| HOLDOUT all | 428 | +23.06 | +5.25 | +2.76 |
+| **HOLDOUT filtered (36% kept)** | 156 | **+51.01** | +5.54 | **+3.22** |
+
+1. **Base edge holds OOS within train:** unfiltered holdout +23.06 (t_NW +2.76) ≈
+   dev +24.15 — the 5-min tail reversion is stable across the train period, not a
+   dev artifact.
+2. **The filter generalizes — better OOS:** fixed from dev, it lifts the holdout
+   mean +23 → **+51** and *raises* significance (t_NW 2.76 → 3.22) on 36% of trades;
+   on dev it lifts +24 → +35 with t_NW essentially unchanged. Trimming preserves
+   significance despite fewer, higher-variance trades.
+
+The adaptive keep-rate (64% dev vs 36% holdout) is the trailing median tightening in
+calmer stretches so only genuinely violent cascades trade — exactly the intended
+behavior, and those revert hardest.
+
+**In dollars** (net bps × $1 per $10k notional per round-trip): DEV all $24.15 →
+filtered $34.68; HOLDOUT all $23.06 → **filtered $51.01 net per $10k per trade**.
+(Per-trade on notional — not a return on fixed capital, since 5-min holds overlap.)
+
+### How much to believe it
+
+This is the project's first OOS validation and it passes — **but it is within-train
+OOS, not the reserved test period.** The filtered holdout n=156 is getting small and
+the trimmed book carries higher per-trade variance. The multiple-testing worry from
+F6 is now substantially reduced: displacement was an a-priori-sensible feature *and*
+it validates OOS without re-tuning.
+
+### Next steps
+
+1. Maker entry (Step 2) — kill the ~10 bps fee on top of the trimmed, OOS-validated
+   book; would lift the filtered ~+35–51 toward ~+40–57.
+2. Final **test-period OOS** (2024-06-25 → 2024-10-14) — single final run only, kept
+   untouched until the strategy is frozen.
