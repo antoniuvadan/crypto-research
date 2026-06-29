@@ -7,15 +7,23 @@
      Holdout-filtered result **invariant at +51.01 bps, t_NW 3.22, n=156** in EVERY
      setting (keep-set element-wise identical for W≥30d). min_hist only shifts the dev
      cold-start (501 vs 504 kept). The W=30d/mh=15 choice does NOT drive the number.
-  2. **Pessimistic fill floor:** replaced the favorable optimistic sweep with a flat
-     2 bps/side taker spread. Every cell stays +ve & significant; **holdout filtered
-     floor = +45.21 bps, t_NW 2.86** (from optimistic +51.01). Carry +45 to the OOS.
+     *Nuance (tempers F7):* the median adapts to the LEVEL of recent displacements
+     (keep-rate 64% dev / 36% holdout) but is insensitive to WINDOW LENGTH — so F7's
+     "adaptive tightening" is weaker than implied; the filter ≈ "trade absolutely-violent
+     cascades". NOT swept: the threshold QUANTILE (uses median; 40th/60th untested).
+  2. **Pessimistic fill floor** (arithmetic substitution on the decomp, NOT a re-sim):
+     replace the favorable sweep with a flat s bps/side taker spread, net = gross_mid −
+     latency − 2s − 10. Swept s∈{2,3,4}: **holdout FILTERED stays +ve & significant,
+     +45.21→+41.21 (t_NW 2.86→2.60)**. But holdout UNFILTERED loses significance by s=3
+     (t 1.84) → the trim does real work under conservative fills. Carry **+41–45** to OOS.
   3. **Capacity on violent events:** $50k vs $100k book-walk on the kept subset moves
-     just **−0.17 bps** (slightly more favorable). Negligible vs the +45–51 edge —
-     capacity holds even on the thinnest-book violent cascades.
-  - Caveats: all within-train; floor still assumes tape liquidity available; capacity
-    only to $100k; **regime-concentration (F4) is unaddressed — that's what the OOS
-    tests.** Next = the one-shot TRUE OOS (2024-06-25→2024-10-14), strategy frozen.
+     just **−0.17 bps**. Negligible — but this is a 2× PROBE, not a capacity ceiling
+     (scale-to-size untested); only establishes the $50k–$100k backtest isn't
+     impact-distorted.
+  - Caveats: all within-train; floor assumes tape liquidity available + s is assumed not
+    measured; threshold-quantile untested; capacity-to-scale untested; **regime-
+    concentration (F4) unaddressed by design — that's what the OOS tests.** Next = the
+    one-shot TRUE OOS (2024-06-25→2024-10-14), strategy frozen. USER: hold, do NOT run OOS yet.
 
 # Sunday June 28, 2026
 
