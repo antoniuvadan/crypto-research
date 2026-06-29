@@ -511,3 +511,82 @@ either. **The lever with real headroom is entry-time selection (trimming), not
 exiting** — pursue book-state / cascade-feature entry filters next. One narrow
 untested variant: a *trailing* stop armed only after an extreme MFE (unlikely to
 help given the persistent right tail).
+
+---
+
+## Finding 6 — Entry filters: the edge lives in violent cascades; trimming the calm ones ~doubles per-trade return
+
+**Date:** 2026-06-28
+**Artifact:** `entry_filter_analysis.py` (writes
+`data/results/entry_filter_8mo_features.csv`).
+**Scope:** **8-month dev window** (2023-06-25 → 2024-02-24; book reads only look
+back from decision, holdout untouched), ≥98th tail reversion, 5-min trades,
+**n=541**. For each trade, compute causal decision-time features and test which
+predict the realized net bps (after fee), via Spearman rank-correlation + quintile
+conditional means.
+
+### Baseline & direction
+
+Mean net **+24.15 bps**. Long **+30.1** (n=371) vs short **+11.1** (n=170) — longs
+clearly stronger, shorts positive but weaker (consistent with F4).
+
+### Feature → net return (Spearman r, t)
+
+| feature | r | t | reading |
+|---|---|---|---|
+| trailing 30-min vol | **+0.38** | +9.5 | strongest — high-vol regime reverts hard |
+| cascade displacement | **+0.36** | +9.0 | bigger dislocation → bigger reversion |
+| pre-cascade trend (predrift) | −0.22 | −5.2 | steeper *capitulation* → stronger bounce |
+| spread | +0.16 | +3.8 | positive but non-monotonic → not usable |
+| size_ratio (volume / threshold) | −0.09 | −2.1 | extreme *volume* reverts *less* |
+| book imbalance | +0.03 | ns | no signal |
+| micro-price lean | 0.00 | ns | no signal |
+
+- **Vol and displacement are the same underlying signal** (Spearman 0.78) — both
+  proxy how violent/overshot the cascade was; that is the dominant predictor.
+  Quintile highlights: vol Q5 **+113** vs bottom-4 ≈0; displacement Q5 **+96** vs
+  bottom-2 ≈0; steepest-capitulation predrift Q1 **+85**.
+- **Microstructure-at-decision (imbalance, micro-price) predicts nothing** — the
+  *magnitude of dislocation* does, not the instantaneous book lean.
+- The original "extreme = non-reverting" heuristic holds **only for volume**
+  (size_ratio >2× threshold nets just +3.5), but **price displacement** runs the
+  other way — large displacement is good, extreme volume is not.
+
+### Trim simulation
+
+| filter | kept | mean net | % of total P&L kept |
+|---|---|---|---|
+| baseline | 100% | +24.15 | 100% |
+| **displacement ≥ median** | 50% | **+46.6** | **97%** |
+| vol ≥ median | 50% | +44.7 | 93% |
+| vol ≥ med AND disp ≥ med | 42% | +53.6 | 93% |
+| vol top-20% | 20% | **+113** | 94% |
+
+The bottom half of cascades by displacement contributes ~3% of total profit.
+Dropping them **doubles** the per-trade net edge (+24 → +47) while keeping ~97% of
+the money — same P&L, half the trades, half the capital-at-risk, far better margin
+over the 10-bps fee. The top vol quintile alone (20% of trades) captures 94% of all
+profit.
+
+### Verdict / recommendation
+
+The reversion edge is concentrated in the **violent, overshot cascades**; the calm,
+small-displacement ≥98th events barely revert and only dilute the per-trade edge.
+**Recommended filter:** trade ≥98th cascades only when decision-time **displacement
+(or trailing 30-min vol) is above the median.** Economically grounded and robust
+(median, not a tuned extreme).
+
+**Caveats:** in-sample on dev; vol ≈ displacement (Spearman 0.78) so pick one —
+displacement is the more direct "room to revert"; the trimmed book has **higher
+per-trade variance** (these are the big-MFE/MAE trades) and leans harder on the
+volatile regime (ties to F4's regime-concentration); a *live* filter needs a
+trailing/rolling median, not the full-sample one. **Validate the threshold on the
+holdout before trusting it.**
+
+### Next steps
+
+1. Bake a causal (trailing-median) displacement/vol filter into the signal and
+   re-measure net + Newey-West on dev (does trimming improve significance, given
+   higher per-trade variance?).
+2. Maker entry (Step 2) — orthogonal, on top of the trimmed book.
+3. Validation pass on the 2nd-half-of-train holdout, then the final test-period OOS.

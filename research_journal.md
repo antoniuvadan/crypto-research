@@ -1,5 +1,19 @@
 # Sunday June 28, 2026
 
+- [x] **Entry-filter (trimming) analysis, 8-month dev** (`entry_filter_analysis.py`,
+  n=541). **The edge lives in violent cascades; trimming the calm ones ~doubles
+  per-trade return.** Causal decision-time feature scan: strongest predictors are
+  trailing 30-min vol (Spearman +0.38, t 9.5) and cascade displacement (+0.36, t 9.0)
+  — and they're the SAME signal (r=0.78, "how overshot the cascade was"). Steeper
+  capitulation (predrift −0.22) and longs (>shorts) also help. NO signal from book
+  imbalance / micro-price (microstructure-at-decision doesn't predict; dislocation
+  magnitude does). Extreme VOLUME reverts less (size_ratio −0.09) but price
+  DISPLACEMENT more — so the old heuristic holds only for volume. Trim: displacement
+  ≥ median → keep 50%, mean net +24→+46.6, retains 97% of total P&L; vol top-20% →
+  +113 mean, 94% of P&L. Recommended filter: displacement (or 30min vol) ≥ median.
+  Caveats: in-sample; higher per-trade variance; needs a trailing-median (causal)
+  threshold live; validate on holdout. See `research.md` Finding 6.
+
 - [x] **MAE/MFE path study (exit-timing), 8-month dev window** (`mae_mfe_analysis.py`,
   n=541). **Early exits (take-profit / stop) HURT — holding is the edge.** Trades take
   huge two-sided excursions (MFE +69 / MAE −77 within 5min) and the reversion is
