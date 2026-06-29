@@ -633,6 +633,25 @@ behavior, and those revert hardest.
 filtered $34.68; HOLDOUT all $23.06 → **filtered $51.01 net per $10k per trade**.
 (Per-trade on notional — not a return on fixed capital, since 5-min holds overlap.)
 
+### Holdout dollar P&L and capital (at the backtest's $50k/trade)
+
+Over the ~4-month holdout (2024-02-26 → 2024-06-24), accounting for overlap (peak
+simultaneous positions sets the capital base):
+
+| | trades | total net P&L | per-trade notional | peak concurrent | peak capital | return on peak cap |
+|---|---|---|---|---|---|---|
+| HOLDOUT all | 428 | $49,350 | $50k | 23 | $1,150,000 | +4.3% |
+| **HOLDOUT filtered** | 156 | **$39,789** | $50k | 12 | **$600,000** | **+6.6%** |
+
+The trim gives up ~20% of the gross dollars but on **half the capital**, so
+return-on-capital rises +4.3% → **+6.6%** over ~4 months (~20% annualized, caveated).
+"Initial notional" has two senses: per-position **$50k**, or the capital base to fund
+the strategy ≈ **$600k** (peak-12 concurrent; average utilization is far lower, so
+position limits could run it on less). $50k/trade is arbitrary — the scale-free
+quantity is the per-trade edge (+51 bps); total $ scales ~linearly with size until
+impact bites (negligible here, F1). Indicative, not hardened: within-train OOS,
+optimistic fills, taker fees, regime-concentrated.
+
 ### How much to believe it
 
 This is the project's first OOS validation and it passes — **but it is within-train
