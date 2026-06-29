@@ -1,3 +1,22 @@
+# Monday June 29, 2026
+
+- [x] **Pre-OOS de-risking (Track A) — frozen candidate PASSES all three checks**
+  (`robustness_checks.py`, no new sim — reuses precomputed displacement + decomp). See
+  `research.md` Finding 9. The trimmed 5-min taker tail reversion is ready to freeze.
+  1. **Trim-filter robustness:** swept lookback W∈{5..120}d × min_hist∈{10,15,25}.
+     Holdout-filtered result **invariant at +51.01 bps, t_NW 3.22, n=156** in EVERY
+     setting (keep-set element-wise identical for W≥30d). min_hist only shifts the dev
+     cold-start (501 vs 504 kept). The W=30d/mh=15 choice does NOT drive the number.
+  2. **Pessimistic fill floor:** replaced the favorable optimistic sweep with a flat
+     2 bps/side taker spread. Every cell stays +ve & significant; **holdout filtered
+     floor = +45.21 bps, t_NW 2.86** (from optimistic +51.01). Carry +45 to the OOS.
+  3. **Capacity on violent events:** $50k vs $100k book-walk on the kept subset moves
+     just **−0.17 bps** (slightly more favorable). Negligible vs the +45–51 edge —
+     capacity holds even on the thinnest-book violent cascades.
+  - Caveats: all within-train; floor still assumes tape liquidity available; capacity
+    only to $100k; **regime-concentration (F4) is unaddressed — that's what the OOS
+    tests.** Next = the one-shot TRUE OOS (2024-06-25→2024-10-14), strategy frozen.
+
 # Sunday June 28, 2026
 
 - [x] **Maker entry — TESTED AND REJECTED** (`backtester._maker_fill_from_agg_trades`,

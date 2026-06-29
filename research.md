@@ -768,4 +768,82 @@ from F7.
    with maker ruled out, it effectively is (trimmed 5-min taker tail reversion).
 3. Optional before freezing: parameter-robustness of the trim lookback (30d) and the
    market-neutral pre-window (60min) on dev only (F4/F7 flagged both as untested),
-   to de-risk the single OOS shot.
+   to de-risk the single OOS shot. **→ Finding 9: done — all checks pass.**
+
+---
+
+## Finding 9 — Pre-OOS de-risking: the frozen candidate is parameter-robust, survives conservative fills, and has capacity headroom
+
+**Date:** 2026-06-29
+**Artifact:** `robustness_checks.py` (reuses `data/results/trim_filter_trades.csv` for
+the precomputed causal displacement, `..._long_horizons_decomp_trades.csv` for the
+per-trade bps split, and `reversion_decomposition_trades.csv` for the $50k-vs-$100k
+fills). No new simulation; no book reads.
+**Scope:** the F7 frozen candidate — trimmed 5-min ≥98th tail reversion — on
+DEV (2023-06-25 → 2024-02-24) and the within-train HOLDOUT (2024-02-25 → 2024-06-24).
+**Test period untouched.** Three checks flagged as the pre-OOS gaps (F4/F7).
+
+### Check 1 — trim-filter robustness: the +51 holdout edge does not depend on the lookback
+
+The causal displacement filter's trailing-median lookback `W` (F7 fixed at 30d) and
+`min_history` (15) were never tested. Sweeping **W ∈ {5,10,15,30,45,60,90,120} days ×
+min_history ∈ {10,15,25}**, the **holdout-filtered result is invariant**: +51.01 bps,
+t_NW 3.22, n=156 (36% kept) in *every* setting — the holdout keep-set is element-wise
+identical for all W ≥ 30d and gives the same mean/n below that. `min_history` only
+nudges the dev cold-start (501 vs 504 of 969 total kept), never the holdout. The
+displacement distribution of tail events is stationary enough that a 5-day and a
+120-day trailing median rank the same events across the keep threshold. **The W=30d /
+min_hist=15 choice does not drive the number — it is not a tuned setting.**
+
+### Check 2 — pessimistic fill floor: survives a conservative 2 bps/side taker spread
+
+The headline net rests on the optimistic aggTrades sweep, whose spread terms came out
+slightly *favorable* (F4: −2.0 bps combined). Replacing them with a flat **2 bps/side
+taker spread** (`net_floor = gross_mid_to_mid − latency − 4 − 10`):
+
+| cell | optimistic (realized) | floor (2 bps/side) |
+|---|---|---|
+| DEV all (n=541) | +24.15 (t_NW 3.55) | +17.88 (2.62) |
+| DEV filtered (n=347) | +34.68 (3.59) | +28.43 (2.93) |
+| HOLDOUT all (n=428) | +23.06 (2.76) | +17.42 (2.08) |
+| **HOLDOUT filtered (n=156)** | **+51.01 (3.22)** | **+45.21 (2.86)** |
+
+Every cell stays positive and significant. The honest floor on the headline filtered
+holdout is **+45 bps, t_NW 2.86** — the conservative number to carry into the OOS.
+
+### Check 3 — capacity on violent events: doubling size barely moves the fill
+
+F1 found book-walk negligible ($50k ≈ $100k) on the *full* population, but the trimmed
+book trades the most violent cascades — when the L1 book is thinnest. Comparing the
+entry+exit book-walk (`spread_entry + spread_exit`, bps; negative = filled inside mid)
+at $50k vs $100k on the kept (violent) subset (2-min decomposition; entry is at
+decision+latency, identical across horizons, so it carries to the 5-min tail):
+
+| subset | $50k total | $100k total |
+|---|---|---|
+| all events | −2.42 | −2.61 |
+| kept (violent) | −2.61 | −2.78 |
+
+Doubling size on the violent subset moves total book-walk by **−0.17 bps** (slightly
+*more* favorable — measurement noise either way). Negligible against the +45–51 bps
+edge: **capacity holds at these sizes even on the thinnest-book events.**
+
+### Verdict
+
+The frozen candidate is de-risked on all three axes flagged before the OOS:
+parameter-robust (the +51 holdout is invariant to the trim lookback), survives a
+conservative fill model (floor +45 bps, t_NW 2.86), and has capacity headroom to
+$100k on violent events. **Nothing here argues against running the single test-period
+OOS; the strategy is ready to freeze.**
+
+**Caveats:** all within-train. The pessimistic floor charges a flat spread but still
+assumes the historical tape liquidity was available (no queue/impact model beyond the
+−0.17 bps capacity probe); capacity tested only to $100k. The regime-concentration
+risk (F4) is unaddressed by these checks — it is precisely what the OOS tests.
+
+### Next steps
+
+1. **One-shot TRUE OOS on the test period** (2024-06-25 → 2024-10-14), strategy frozen:
+   trimmed 5-min ≥98th taker tail reversion, displacement > causal trailing-median.
+   Carry the floor (+45 bps) as the conservative expectation; state the
+   regime-dependence prior (F4) before running.
