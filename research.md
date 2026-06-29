@@ -663,6 +663,109 @@ it validates OOS without re-tuning.
 ### Next steps
 
 1. Maker entry (Step 2) — kill the ~10 bps fee on top of the trimmed, OOS-validated
-   book; would lift the filtered ~+35–51 toward ~+40–57.
+   book; would lift the filtered ~+35–51 toward ~+40–57. **→ Finding 8: tested and
+   rejected — passive entry is a net loser here.**
 2. Final **test-period OOS** (2024-06-25 → 2024-10-14) — single final run only, kept
    untouched until the strategy is frozen.
+
+---
+
+## Finding 8 — Maker entry doesn't help: the fee saving is outweighed by adverse selection (the long-standing "Step 2" is rejected)
+
+**Date:** 2026-06-28
+**Artifacts:** `backtester._maker_fill_from_agg_trades` (new passive-fill primitive)
+and `backtest_reversion_maker.py` (writes `data/results/reversion_maker_trades.csv`).
+**Scope:** the Finding-7 setup — full-train ≥98th tail, 5-min reversion, $50k,
+causal displacement trim filter (fixed from dev) — split DEV (2023-06-25 →
+2024-02-24) vs within-train HOLDOUT (2024-02-25 → 2024-06-24). Test period
+untouched.
+
+### Motivation
+
+Every finding since F1 named the **10 bps round-trip taker fee** as the binding
+friction, and F5 showed we *want* to hold (no hurry to fill) — the textbook setup
+for passive entry. The standing "Step 2" (since F2's next-steps) was that maker
+entry would lift the filtered net from ~+35–51 toward ~+40–57. This tests it.
+
+### Method
+
+`_maker_fill_from_agg_trades` is the mirror of the taker sweep: a resting limit at
+the decision-time **touch** (bid for a long reversion, ask for a short) fills only
+when an aggressor on the *opposite* side trades into it (`want_buyer_maker` flips to
+`signed > 0`), gated by a price condition. **strict_cross** (used here) requires the
+tape to trade *strictly through* the limit — a conservative queue assumption (the
+level cleared, so a resting order at it filled). A passive order fills at its own
+quoted price, so the fill VWAP is the limit, not the print. **No-fills are dropped**
+(you posted, never filled → no trade). The driver simulates a taker entry and a
+maker entry per event, exits both with a taker sweep at decision + 5min + latency,
+and applies the F7 trim mask. Fills are fee-independent, so net is computed under
+three fee modes off one sim. **The honest headline is `net_bps(all)`: mean over
+*every attempted event*, crediting the non-filled maker events at 0 P&L** — so the
+entry-fee saving and the forfeited winners sit on one ledger.
+
+### Results (net bps; baseline reproduces F7 exactly)
+
+| cell | taker/taker (baseline) | maker-in/taker-out (realistic) | maker/maker (optimistic bound) |
+|---|---|---|---|
+| DEV all (n=541) | **24.15** (t_NW 3.55) | 22.67 (3.43) | 25.44 (3.84) |
+| DEV filtered (n=347) | **34.68** (3.59) | 33.40 (3.47) | 36.22 (3.76) |
+| **HOLDOUT all** (n=428) | **23.06** (2.76) | 20.11 (2.80) | 22.92 (3.19) |
+| **HOLDOUT filtered** (n=156) | **51.01** (3.22) | **45.58** (3.29) | 48.41 (3.50) |
+
+(`maker/maker` is a fee-only bound: it credits a 2 bps maker *exit* fee without
+modelling passive-exit fill risk — same taker-exit fills, 2 bps charged. Maker fill
+rate 94–96% throughout.) Baseline taker/taker matches F7 to the decimal (DEV all
+24.15 / filtered 34.68, HOLDOUT all 23.06 / filtered 51.01), confirming the event
+set, displacement, trim mask, and P&L are apples-to-apples.
+
+### Verdict: passive entry is a net loser here
+
+**The realistic maker-in/taker-out underperforms the taker baseline in every cell** —
+by 1.3 bps on dev up to **−5.4 bps on the OOS filtered holdout** (51.01 → 45.58).
+Even the *optimistic* maker/maker fee-only bound only ties/slightly-beats taker on
+dev and **still loses on the holdout** (51.01 → 48.41). Significance is preserved
+(t_NW ≈ 3.2–3.5) — the point estimate just doesn't improve. **The 3 bps entry-fee
+saving does not survive contact with the fill.**
+
+### Mechanism — two costs, both intrinsic to a reversion signal
+
+1. **Adverse selection on the fills.** Compare `net_bps(filled)`: HOLDOUT-all
+   maker-in/taker-out fills net **21.36** vs taker **23.06** — *worse* despite a
+   3 bps fee discount, i.e. the gross fill price is ~4–5 bps worse. A resting bid in
+   a falling cascade is only hit when a taker sells *through* it; you fill precisely
+   on the events that kept dropping, then recover from a deeper hole.
+2. **Missed winners.** Fill rate is high (94–96%), but the 4–6% no-fills aren't
+   random — they're the events where the bounce started immediately and price never
+   traded back down to your bid (your *best* trades). On the same-universe `all`
+   basis those misses count as zero, and forfeiting them costs more than the fee
+   saving gains.
+
+Both are baked into the signal: you are betting "price is about to revert," so a
+passive order on the side you want is **by construction adversely selected against**.
+Posting more aggressively (inside the touch) fills more but at worse prices; less
+aggressively misses more winners — no placement escapes the trade-off.
+
+### Implication
+
+This **overturns the standing assumption** (carried since F1) that maker entry was
+the highest-leverage next step. The fee is the biggest cost *line* but is not
+capturable passively here — the cure costs more than the disease. The **frozen taker
+candidate stands as the best configuration: trimmed 5-min tail reversion, +51 bps
+net on the within-train holdout (t_NW 3.22), taker/taker fills.** There is no maker
+improvement to stack before the final test.
+
+**Caveats:** one queue model (strict-cross) and one placement (touch); inner/outer
+limit prices and the non-strict (front-of-queue) assumption were not swept — but the
+*optimistic* maker/maker bound already failing OOS means they would not rescue it.
+Within-train holdout, optimistic taker exit sweep, regime-concentrated — unchanged
+from F7.
+
+### Next steps
+
+1. ~~Maker entry~~ **done — rejected.** No fee-side improvement to pursue.
+2. The remaining real lever is the **one-shot TRUE OOS on the test period**
+   (2024-06-25 → 2024-10-14), to be run once the strategy is declared frozen — which,
+   with maker ruled out, it effectively is (trimmed 5-min taker tail reversion).
+3. Optional before freezing: parameter-robustness of the trim lookback (30d) and the
+   market-neutral pre-window (60min) on dev only (F4/F7 flagged both as untested),
+   to de-risk the single OOS shot.

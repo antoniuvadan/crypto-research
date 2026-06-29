@@ -547,6 +547,86 @@ def _sweep_fill_from_agg_trades(
     )
 
 
+def _maker_fill_from_agg_trades(
+    signed_quantity: float,
+    limit_price: float,
+    start_time: datetime,
+    trade_times_ns: np.ndarray,
+    trade_times: list[datetime],
+    prices: np.ndarray,
+    quantities: np.ndarray,
+    is_buyer_maker: np.ndarray,
+    max_end_time: datetime | None = None,
+    strict_cross: bool = True,
+) -> SweepExecution:
+    """Passive (maker) fill: a resting limit waits for the tape to come to it.
+
+    A limit at `limit_price` fills only when an aggressor on the *opposite* side
+    trades into it within [start_time, max_end_time]:
+      * maker BUY  (signed_quantity > 0): rest a bid; fills on a taker SELL
+        (is_buyer_maker == True) printing at price <= limit_price.
+      * maker SELL (signed_quantity < 0): rest an ask; fills on a taker BUY
+        (is_buyer_maker == False) printing at price >= limit_price.
+
+    This is the mirror image of `_sweep_fill_from_agg_trades`, which crosses the
+    spread and matches the *same*-side aggressor (`want_buyer_maker = signed < 0`);
+    here `want_buyer_maker = signed > 0`.
+
+    `strict_cross` requires the print to trade *strictly through* the limit -- a
+    conservative queue assumption: the level was cleared, so anything resting at it
+    (including us) must have filled. With it False, a print exactly at the limit
+    also counts (optimistic front-of-queue). A passive order fills at its own
+    quoted price, so `avg_price` is `limit_price` regardless of how far the
+    aggressor walked past it.
+
+    If nothing reaches the limit in the window, `filled_quantity` is 0 -- the order
+    never filled and the trade does not happen (a missed trade, not a free entry).
+    """
+    requested_abs = abs(signed_quantity)
+    if requested_abs == 0:
+        return SweepExecution(signed_quantity, 0.0, None, start_time, None, True)
+
+    start_ns = _datetime_to_ns(start_time)
+    max_end_ns = _datetime_to_ns(max_end_time) if max_end_time is not None else None
+    start_idx = int(np.searchsorted(trade_times_ns, start_ns, side="left"))
+    want_buyer_maker = signed_quantity > 0  # a bid fills against taker SELLs
+    is_buy = signed_quantity > 0
+    remaining = requested_abs
+    filled_abs = 0.0
+    end_time: datetime | None = None
+
+    for idx in range(start_idx, len(trade_times_ns)):
+        if max_end_ns is not None and trade_times_ns[idx] > max_end_ns:
+            break
+        if bool(is_buyer_maker[idx]) != want_buyer_maker:
+            continue
+        price = float(prices[idx])
+        if is_buy:
+            crossed = price < limit_price if strict_cross else price <= limit_price
+        else:
+            crossed = price > limit_price if strict_cross else price >= limit_price
+        if not crossed:
+            continue
+
+        fill_abs = min(remaining, float(quantities[idx]))
+        filled_abs += fill_abs
+        remaining -= fill_abs
+        end_time = trade_times[idx]
+        if remaining <= 0:
+            break
+
+    signed_filled = filled_abs if signed_quantity > 0 else -filled_abs
+    avg_price = limit_price if filled_abs > 0 else None
+    return SweepExecution(
+        requested_quantity=signed_quantity,
+        filled_quantity=signed_filled,
+        avg_price=avg_price,
+        start_time=start_time,
+        end_time=end_time,
+        is_complete=filled_abs >= requested_abs,
+    )
+
+
 def _linear_contract_pnl_usd(
     position: float,
     entry_price: float,

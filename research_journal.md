@@ -1,5 +1,29 @@
 # Sunday June 28, 2026
 
+- [x] **Maker entry — TESTED AND REJECTED** (`backtester._maker_fill_from_agg_trades`,
+  driver `backtest_reversion_maker.py`). The long-standing "Step 2" (kill the 10 bps
+  taker fee with passive entry) **does not work — maker entry is a net loser here.**
+  New passive-fill primitive: resting limit at the decision-time touch fills only when
+  a taker prints *through* it (strict-cross queue assumption), fills at the limit, and
+  no-fills are dropped. Honest headline = `net_bps(all)`, crediting non-filled maker
+  events at 0 P&L (same event universe as taker). Baseline taker/taker reproduces F7
+  exactly (HOLDOUT filtered +51.01) ⇒ apples-to-apples.
+  - **Realistic maker-in/taker-out underperforms taker in EVERY cell** (−1.3 bps dev →
+    **−5.4 bps OOS filtered holdout, 51.01 → 45.58**). Even the *optimistic* maker/maker
+    fee-only bound loses on the holdout (→48.41). t_NW preserved (~3.2–3.5); the point
+    estimate just doesn't improve.
+  - **Mechanism (intrinsic to a reversion signal):** (1) adverse selection on fills —
+    HOLDOUT-all filled net 21.36 (maker) vs 23.06 (taker), ~4–5 bps worse gross despite
+    the 3 bps fee discount, because a resting bid only fills when price trades *through*
+    it (you're selected into the deeper continuations); (2) the 4–6% no-fills are the
+    bounces that started immediately = your best trades. Betting "about to revert" ⇒ a
+    passive order on the side you want is by construction adversely selected against.
+  - **Overturns the F1-era assumption** that maker was the highest-leverage step. The
+    frozen **taker** candidate stands: trimmed 5-min tail reversion, +51 bps HOLDOUT
+    (t_NW 3.22). No fee improvement to stack before the final test. See `research.md`
+    Finding 8. Caveats: one queue model (strict-cross) + one placement (touch), but the
+    optimistic bound already fails OOS so sweeping placement won't rescue it.
+
 - [x] **Baked the causal trim filter + within-train OOS validation** (`apply_trim_filter.py`).
   Filter: keep a ≥98th cascade iff decision-time displacement > trailing-30d median of
   past tail-event displacements (causal, adaptive; fixed from dev). Trimming only drops
