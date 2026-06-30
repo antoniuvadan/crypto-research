@@ -1,5 +1,27 @@
 # Monday June 29, 2026
 
+- [x] **TRUE OOS ON THE RESERVED TEST PERIOD — THE EDGE HOLDS** (`strategies/backtest_oos_test.py`,
+  writes `oos_test_trades.csv`). One-shot, frozen strategy, NOTHING re-tuned. Test =
+  2024-06-25→2024-10-14 (untouched in F1–F9); warmup load from 2024-04-15 so the 7d
+  threshold + 30d trim median are causally warmed. See `research.md` Finding 10. **THE
+  HEADLINE PROJECT RESULT.**
+  - 245 ≥98th tail events in test; trim keeps 105 (43%). **Filtered net +48.85 bps,
+    t_NW +2.62** (gross +58.85, t_NW 3.15) — within noise of the within-train holdout
+    (+51.01 / +41–45 floor). **Edge did NOT decay OOS.**
+  - **Unfiltered net +15.12, t_NW 1.48 — NOT significant** → the trim does essential work
+    (as F9 predicted); the result rests on the 105 violent cascades.
+  - **Both directions profit:** long +58.12 (t_NW 2.10, noisy), **short +34.38 (t_NW 4.04,
+    clean)** — kills the bull-beta worry in a different (post-bull) regime.
+  - Conservative floor (exact mids): +43/+41/+39 bps at s=2/3/4 bps/side, t_NW 2.28→2.07 —
+    survives. Realized-fill gross +58.85 vs mid-path +56.10 (2.75bp favorable sweep = F4).
+  - **$ (112d):** $50k→$25,647 net (ROI +2.85% on $900k peak cap, 18 concurrent, ~9.3%/yr);
+    $100k→$50,725 same ROI (**capacity confirmed live**). Per-trade Sharpe +0.467; ann
+    Sharpe ~+4.46 (sparse, indicative); max DD −$6,571; hit rate 75%; best/worst +282/−324.
+  - **Caveats:** one period/one asset/n=105; wide NW SE (18.7); optimistic exit fills
+    (believe the +39–43 floor); capital-inefficient (22/112 active days) so the headline is
+    the per-trade edge not the ROI; **TEST SET NOW SPENT** — further tuning = in-sample;
+    new validation needs new data. Next real OOS = cross-section (other COIN-M perps, Track C).
+
 - [x] **Pre-OOS de-risking (Track A) — frozen candidate PASSES all three checks**
   (`robustness_checks.py`, no new sim — reuses precomputed displacement + decomp). See
   `research.md` Finding 9. The trimmed 5-min taker tail reversion is ready to freeze.

@@ -902,3 +902,118 @@ unaddressed by design.
    dev to close the last untested filter parameter before freezing.
 3. Optional, slow (book reads): the neutralization-window sweep (F4 60-min pre-window
    at 30/90/120) — least critical, re-confirms alpha-vs-drift only.
+
+---
+
+## Finding 10 — TRUE out-of-sample: the edge holds on the reserved test period (+48.85 bps net, t_NW 2.62)
+
+**Date:** 2026-06-29
+**Artifact:** `strategies/backtest_oos_test.py` (writes `data/results/oos_test_trades.csv`).
+**Scope:** the reserved **test period 2024-06-25 → 2024-10-14**, untouched in F1–F9.
+**The frozen strategy was run exactly once; nothing was re-tuned.** Data is loaded from
+2024-04-15 so the trailing-7d event threshold and the trailing-30d trim median are fully
+warmed for every test event (an early-test event's trim history legitimately includes
+late-train tail events — the live/causal behaviour); only events with `decision_time` in
+the test period are reported. One causal book pass per trade yields both the displacement
+(for the trim) and the mid path (for the conservative floor).
+
+### The strategy (frozen)
+
+≥98th-pct cascade tail (trailing-7d threshold) → reversion, 5-min fixed hold, taker
+fills → causal trim: keep iff decision-time displacement > trailing-30d median of past
+tail-event displacements (min_history 15). Identical to F7/F9; zero new parameters.
+
+### Result — it generalizes
+
+**245** ≥98th tail events fired in the test period; the trim kept **105 (43%)**.
+
+| cell | n | mean net bps | SE_NW | **t_NW** | t_IID |
+|---|---|---|---|---|---|
+| test all (unfiltered) | 245 | +15.12 | 10.23 | **1.48** | 2.75 |
+| **test FILTERED (the strategy)** | 105 | **+48.85** | 18.67 | **+2.62** | 4.78 |
+| gross filtered (before fees) | 105 | +58.85 | 18.67 | +3.15 | 5.76 |
+
+**The filtered OOS net is +48.85 bps (t_NW +2.62), within noise of the within-train
+holdout (+51.01 optimistic / +41–45 floor).** The edge did not decay out-of-sample. The
+**unfiltered** book is +15.12 and **not** significant (t_NW 1.48) — exactly as F9
+predicted, so the **trim is doing essential work**, not cosmetic lifting. NW SEs are
+~1.8× the IID SEs (event clustering; L=4), and the result clears the HAC bar anyway.
+
+### Both directions profit — not a regime artifact
+
+| direction | n | net bps | SE_NW | t_NW |
+|---|---|---|---|---|
+| long | 64 | +58.12 | 27.71 | +2.10 |
+| short | 41 | +34.38 | 8.50 | **+4.04** |
+
+The short side is **clean and tightly significant this time** (t_NW 4.04) — strong
+evidence against a long-drift/beta explanation, and a genuine test win given the test
+window is a different (post-bull, choppier) regime than the Dec23–Mar24 stretch that
+carried much of the in-sample edge (F4 prior). Longs are noisier (wide SE, big winners).
+
+### Conservative fill floor (filtered; exact mids, F9 method)
+
+| s (bps/side) | mean net bps | SE_NW | t_NW |
+|---|---|---|---|
+| 2 | +43.13 | 18.89 | +2.28 |
+| 3 | +41.13 | 18.89 | +2.18 |
+| 4 | +39.13 | 18.89 | +2.07 |
+
+The edge **survives a conservative taker spread through s = 4 (+39 bps, t_NW 2.07)**.
+Sanity: realized-fill gross +58.85 vs mid-path gross +56.10 (the ~2.75 bps gap is the
+optimistic sweep's favorable fill, consistent with F4) — the fills are not wildly
+optimistic.
+
+### Dollar P&L, capital, ROI (filtered strategy, 112-day test span)
+
+| | trades | total net | mean/trade | peak concurrent | peak capital | ROI | ~annualized |
+|---|---|---|---|---|---|---|---|
+| $50k/trade | 105 | **$25,647** | $244 | 18 | $900,000 | **+2.85%** | ~+9.3%/yr |
+| $100k/trade | 105 | **$50,725** | $483 | 18 | $1,800,000 | +2.82% | ~+9.2%/yr |
+
+$100k nets ~2× $50k at the same ROI — **capacity confirmed live** (impact negligible,
+as F1/F9 predicted). Gross $30,897 at $50k, of which $5,250 is fees. The ROI is on the
+*peak* capital base (18 simultaneous positions); average utilization is far lower (only
+22 of 112 days are active), so the strategy is **capital-inefficient** — the scale-free
+quantity is the per-trade edge (+49 bps), and ROI depends heavily on the capital
+convention and position-limit policy.
+
+### Risk / Sharpe (filtered, $50k)
+
+- **Per-trade Sharpe +0.467** (mean/std of per-trade net bps) — the robust primitive.
+- **Annualized Sharpe ≈ +4.46** (daily P&L on peak capital over all 112 calendar days,
+  22 active, ×√365) — *flattered by the short, sparse sample*; treat as indicative.
+- **Max drawdown −$6,571** on the equity curve (vs +$25,647 total) — shallow.
+- **Hit rate 75%** (79/105 net-positive); best/worst trade +282 / −324 bps; median +42,
+  mean +49.
+
+### Verdict
+
+**The liquidation-cascade reversion edge is real and out-of-sample.** Discovered as an
+*inversion* of the original momentum hypothesis (F1), localized to the violent ≥98th
+tail at a 5-min hold (F3–F4), shown to be alpha fighting an adverse trend (F4),
+concentrated by a causal displacement trim (F6–F7), de-risked on parameters/fills/capacity
+(F9), and with the fee-side maker improvement ruled out (F8) — it now **clears a single,
+pre-registered, one-shot OOS at +48.85 bps net (t_NW 2.62), ~+39–43 under conservative
+fills, profitable in both directions, in a different regime.**
+
+**Caveats (the honest ceiling on the claim):**
+- **One test period, one asset, n=105 filtered.** The NW SE is wide (18.7 bps); t_NW 2.62
+  is ~1% significance but not overwhelming. This is *a* clean OOS, not a Sharpe-rich
+  industrial strategy.
+- The whole result rests on the trim (unfiltered is insignificant), so the effective
+  sample is 105 violent cascades.
+- **Optimistic exit fills**; the +39–43 conservative floor is the number to believe.
+  Maker entry can't reclaim the fee (F8).
+- **Capital-inefficient / bursty** (22 active days); the headline is the per-trade edge,
+  not the ~9%/yr ROI, which is convention-dependent.
+- **The test set is now spent.** Any further tuning would be in-sample on it; new
+  validation requires new data (other COIN-M perps, or a later period).
+
+### Next steps (post-validation)
+
+1. The BTC edge is confirmed — the prerequisite for **cross-sectional generalization**:
+   does the same ≥98th tail reversion exist on other COIN-M perps (ETH, …)? That is the
+   next real out-of-sample, now worth opening (Track C).
+2. Feature work (scale-normalized shock, cascade dynamics) is now unblocked, but must be
+   validated on *new* data, never the spent test set.
