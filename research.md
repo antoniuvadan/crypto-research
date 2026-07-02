@@ -1017,3 +1017,81 @@ fills, profitable in both directions, in a different regime.**
    next real out-of-sample, now worth opening (Track C).
 2. Feature work (scale-normalized shock, cascade dynamics) is now unblocked, but must be
    validated on *new* data, never the spent test set.
+
+---
+
+## Finding 11 — Cross-asset OOS: the edge does NOT transfer to ETHUSD_PERP (filtered net −157.52 bps)
+
+**Date:** 2026-07-01
+**Artifact:** `strategies/backtest_oos_test_eth.py` (writes `data/results/oos_test_eth_trades.csv`).
+Engine change enabling it: `_book_ticker_day_path` / `BookProvider` / the Model-C runner are
+now symbol-aware (default `BTCUSD_PERP`, so every BTC run is byte-identical — verified: the
+BTC OOS driver reproduces F10 exactly, 245 events → keep 105 → +48.85 / t_NW 2.62).
+**Scope:** ETHUSD_PERP, the **same OOS window 2024-06-25 → 2024-10-14** as the BTC one-shot
+(F10). The BTC strategy was applied **frozen — nothing re-tuned, no ETH-specific fitting**.
+Only the asset bindings differ: ETH data paths, `$10`/contract (ETHUSD_PERP COIN-M face
+value vs BTC `$100`; confirmed against Binance's COIN-M specs), and the bookTicker filename
+symbol. Warmup load from 2024-04-15 (causal threshold + trim), same as BTC.
+
+### The strategy (frozen, identical to F10)
+
+≥98th-pct cascade tail (trailing-7d threshold) → reversion, 5-min fixed hold, taker fills →
+causal trim: keep iff decision-time displacement > trailing-30d median of past tail-event
+displacements (min_history 15). Zero new parameters.
+
+### Result — it does not generalize
+
+| set | n | gross bps | net bps | t_NW |
+|---|---|---|---|---|
+| ETH all | 201 | −56.84 | **−66.84** | −1.59 |
+| ETH FILTERED (strat) | 75 | −147.52 | **−157.52** | −1.62 |
+| *(BTC F10 filtered, same window)* | *105* | *+58.85* | *+48.85* | *+2.62* |
+
+The point estimate is **strongly negative and flips the sign of the BTC result**. It is not
+statistically significant as a *loser* (t_NW −1.62; the NW SE is enormous, 96.9 bps, driven
+by a −1413 bps worst trade), but it **decisively fails to replicate** the BTC positive: none
+of the BTC structure survives. Mid-path gross (−154.23) ≈ realized-fill gross (−147.52), so
+the loss is the **signal**, not an execution/fill artifact.
+
+### Why — a directional sell-off destroyed a long-heavy reversion book
+
+- **The trim, which was essential and helpful on BTC, is actively HARMFUL on ETH**: all →
+  filtered moves −66.84 → −157.52 (on BTC it *raised* the mean). The displacement filter is
+  not a robust cross-asset selector.
+- **The kept set collapses to all-long (75 long / 0 short).** Of 201 tail events, 183 are
+  long-reversions (reversions of SELL-liquidation cascades = forced selling) and only 18 are
+  shorts; longs carry far higher displacement (mean 87.8 vs 24.9 bps), so the "keep the most
+  displaced" trim selects *only* longs.
+- Jun–Oct 2024 was an **ETH down-trend**. The strategy loaded up on long "bounce" bets into
+  falling ETH and got run over — both raw directions lose (long −71.9, short −15.0 net), longs
+  far worse and dominant. $50k sizing: total net −$59k, ROI −5.63% / 112d, max DD −$79k,
+  per-trade Sharpe −0.35, hit rate 52%, worst trade −1413 bps.
+
+This is exactly the **regime-concentration risk** flagged in F4/F10: the BTC edge was
+concentrated in a bull run; on ETH, the *same calendar window* was a sell-off, and a
+reversion strategy that ends up structurally long has no protection against it.
+
+### Verdict
+
+**The liquidation-cascade reversion edge is BTC- and/or regime-specific — it does not survive
+cross-asset transfer to ETH on this window.** The clean BTC OOS (F10) should now be read with
+this ceiling: one asset, one favourable regime. The signal is *not* a general property of
+COIN-M liquidation cascades as currently defined.
+
+**Caveats / what this is and isn't:**
+- One asset added, one window, n=75 filtered, t_NW not significant — this is a *failure to
+  confirm*, not a proven negative edge. But the burden was on ETH to replicate, and it didn't.
+- Frozen transfer is the strict, correct test; **do not re-tune on ETH to rescue it** — that
+  would spend ETH the way the BTC test set is spent (F10).
+- The all-long collapse suggests the strategy needs a **direction/regime guard** (or a
+  trend-neutralized displacement trim) before any cross-asset claim — but that is *new
+  research to be validated on new data*, not a fix to bolt on and re-score here.
+
+### Next steps
+
+1. The cross-asset generalization claim is **rejected as-is**. Any revival needs a
+   regime/direction-aware reformulation (e.g. trend-conditioned trim, or forbidding a
+   structurally net-directional book) — designed and validated on *fresh* data, never this
+   ETH window (now informative) or the BTC test set (spent).
+2. Optional context (cheap, nothing spent on ETH): run the ETH **train** period to see
+   whether ETH ever showed the edge, or whether it's absent on ETH in all regimes.

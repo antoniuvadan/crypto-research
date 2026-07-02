@@ -663,8 +663,10 @@ BOOK_TICKER_DAY_COLS = [
 ]
 
 
-def _book_ticker_day_path(book_ticker_dir: Path, d: date) -> Path:
-    return book_ticker_dir / f"BTCUSD_PERP-bookTicker-{d.isoformat()}.parquet"
+def _book_ticker_day_path(
+    book_ticker_dir: Path, d: date, symbol: str = "BTCUSD_PERP"
+) -> Path:
+    return book_ticker_dir / f"{symbol}-bookTicker-{d.isoformat()}.parquet"
 
 
 @dataclass(frozen=True)
@@ -779,9 +781,11 @@ class BookProvider:
         self,
         book_ticker_dir: Path = DEFAULT_BOOK_TICKER_PATH,
         cache_days: int = 3,
+        symbol: str = "BTCUSD_PERP",
     ) -> None:
         self.book_ticker_dir = book_ticker_dir
         self.cache_days = max(cache_days, 1)
+        self.symbol = symbol
         self._cache: "OrderedDict[date, BookView]" = OrderedDict()
 
     def _day_view(self, d: date) -> BookView:
@@ -789,7 +793,7 @@ class BookProvider:
         if cached is not None:
             self._cache.move_to_end(d)
             return cached
-        path = _book_ticker_day_path(self.book_ticker_dir, d)
+        path = _book_ticker_day_path(self.book_ticker_dir, d, self.symbol)
         view = (
             BookView.from_frame(pl.read_parquet(path, columns=BOOK_TICKER_DAY_COLS))
             if path.exists()

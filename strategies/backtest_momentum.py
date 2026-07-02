@@ -410,6 +410,7 @@ def run_liquidation_momentum_model_c_backtests(
     upper_percentile: float | None = None,
     exit_policy: ExitPolicy | None = None,
     book_ticker_dir: Path | None = DEFAULT_BOOK_TICKER_PATH,
+    book_ticker_symbol: str = "BTCUSD_PERP",
     show_progress: bool = False,
 ) -> dict[str, pl.DataFrame]:
     """
@@ -459,7 +460,11 @@ def run_liquidation_momentum_model_c_backtests(
     total_periods = len(holding_periods)
 
     # Lazy: loads no bookTicker until a dynamic ExitPolicy actually queries it.
-    book_provider = BookProvider(book_ticker_dir) if book_ticker_dir is not None else None
+    book_provider = (
+        BookProvider(book_ticker_dir, symbol=book_ticker_symbol)
+        if book_ticker_dir is not None
+        else None
+    )
 
     for period_idx, holding_period in enumerate(holding_periods, start=1):
         # A caller-supplied policy is used as-is across horizons; otherwise the

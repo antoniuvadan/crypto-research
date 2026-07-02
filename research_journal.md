@@ -1,3 +1,28 @@
+# Wednesday July 1, 2026
+
+- [x] **CROSS-ASSET OOS (Track C) — the BTC edge does NOT transfer to ETHUSD_PERP.**
+  (`strategies/backtest_oos_test_eth.py`, writes `oos_test_eth_trades.csv`). Frozen BTC
+  strategy, NOTHING re-tuned, same OOS window 2024-06-25→2024-10-14. Only asset bindings
+  differ: ETH data paths, $10/contract (confirmed Binance COIN-M spec vs BTC $100),
+  bookTicker symbol. Engine made symbol-aware (`_book_ticker_day_path`/`BookProvider`/
+  Model-C runner, default BTCUSD_PERP) — BTC OOS driver reproduces F10 **exactly**
+  (245→keep 105→+48.85/t_NW 2.62), so the engine change is inert. See `research.md` F11.
+  - **ETH filtered net −157.52 bps (t_NW −1.62); all −66.84 (t_NW −1.59).** Sign-flipped
+    vs BTC (+48.85). NOT significant as a loser (NW SE 96.9, worst trade −1413) but a
+    **decisive failure to replicate**. Mid-path gross −154 ≈ realized-fill gross −148 →
+    it's the SIGNAL, not fills.
+  - **The trim HURTS on ETH** (all −66.84 → filtered −157.52; opposite of BTC). Displacement
+    is not a robust cross-asset selector.
+  - **Kept set collapses to all-long (75/0).** 183/201 tail events are long-reversions
+    (forced selling); longs carry higher displacement (88 vs 25 bps) → trim keeps only
+    longs. Jun–Oct 2024 was an ETH sell-off → long "bounce" book run over (both dirs lose;
+    long −71.9, short −15.0). $50k: −$59k, ROI −5.6%/112d, max DD −$79k, Sharpe −0.35.
+  - **Verdict: the reversion edge is BTC/regime-specific, not a general COIN-M cascade
+    property.** F4/F10's regime-concentration caveat bit: same calendar window, opposite
+    regime on ETH. Cross-asset generalization REJECTED as-is. Revival needs a
+    regime/direction guard, designed + validated on NEW data (never this ETH window or the
+    spent BTC test set). Do NOT re-tune on ETH.
+
 # Monday June 29, 2026
 
 - [x] **TRUE OOS ON THE RESERVED TEST PERIOD — THE EDGE HOLDS** (`strategies/backtest_oos_test.py`,
