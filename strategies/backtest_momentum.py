@@ -411,6 +411,7 @@ def run_liquidation_momentum_model_c_backtests(
     exit_policy: ExitPolicy | None = None,
     book_ticker_dir: Path | None = DEFAULT_BOOK_TICKER_PATH,
     book_ticker_symbol: str = "BTCUSD_PERP",
+    participation: float = 1.0,
     show_progress: bool = False,
 ) -> dict[str, pl.DataFrame]:
     """
@@ -508,6 +509,7 @@ def run_liquidation_momentum_model_c_backtests(
                 quantities=quantities,
                 is_buyer_maker=is_buyer_maker,
                 max_end_time=entry_cap,
+                participation=participation,
             )
 
             if entry.filled_quantity == 0 or entry.avg_price is None:
@@ -535,6 +537,7 @@ def run_liquidation_momentum_model_c_backtests(
                 prices=prices,
                 quantities=quantities,
                 is_buyer_maker=is_buyer_maker,
+                participation=participation,
             )
 
             if exit.filled_quantity == 0 or exit.avg_price is None:

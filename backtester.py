@@ -506,7 +506,18 @@ def _sweep_fill_from_agg_trades(
     quantities: np.ndarray,
     is_buyer_maker: np.ndarray,
     max_end_time: datetime | None = None,
+    participation: float = 1.0,
 ) -> SweepExecution:
+    """Taker sweep across same-side aggressor prints from start_time onward.
+
+    `participation` caps how much of each print we may consume (the max fraction of
+    an aggressor trade's volume our order can take). The default 1.0 captures 100%
+    of every same-side print (the original, optimistic assumption) and is an exact
+    no-op. A value < 1.0 models liquidity competition: our fill spreads over more
+    prints, its VWAP drifts with the tape, and in thin windows it may not complete
+    (is_complete=False) -- a partial/missed trade, which the caller keeps as a
+    realistic outcome rather than a free entry.
+    """
     requested_abs = abs(signed_quantity)
     if requested_abs == 0:
         return SweepExecution(signed_quantity, 0.0, None, start_time, None, True)
@@ -526,7 +537,7 @@ def _sweep_fill_from_agg_trades(
         if bool(is_buyer_maker[idx]) != want_buyer_maker:
             continue
 
-        fill_abs = min(remaining, float(quantities[idx]))
+        fill_abs = min(remaining, participation * float(quantities[idx]))
         filled_abs += fill_abs
         remaining -= fill_abs
         notional_px_qty += fill_abs * float(prices[idx])
