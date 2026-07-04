@@ -59,6 +59,76 @@ def hac_stats(returns_bps: np.ndarray) -> dict[str, float]:
     }
 
 
+def lo_eta(rho: np.ndarray, q: int) -> float:
+    """Lo (2002) autocorrelation-corrected Sharpe ANNUALISATION factor.
+
+    The naive rule annualises a per-period Sharpe by multiplying by sqrt(q) (q = periods per
+    year). That is only correct if the per-period returns are IID. When they are serially
+    correlated the variance of the q-period cumulative return is NOT q*sigma^2 but
+
+        Var(sum of q returns) = sigma^2 * ( q + 2 * sum_{k=1}^{q-1} (q - k) * rho_k )
+
+    so the correct annualisation factor is
+
+        eta(q) = q / sqrt( q + 2 * sum_{k=1}^{q-1} (q - k) * rho_k )      and   SR_annual = eta(q) * SR_period.
+
+    `rho[k-1]` is the lag-k autocorrelation of the returns. With rho == 0 this reduces to
+    eta = q/sqrt(q) = sqrt(q) (the naive rule). POSITIVE autocorrelation makes the denominator
+    bigger, so eta < sqrt(q) and the annualised Sharpe is DEFLATED; negative autocorrelation
+    inflates it. Reference: Andrew W. Lo, "The Statistics of Sharpe Ratios", FAJ 2002, eq. (7)-(9).
+
+    `rho` may be truncated (only the first L lags supplied); lags beyond its length are treated
+    as 0. Returns nan if the corrected variance term is non-positive (extreme negative
+    autocorrelation), which signals the estimate is unusable at that truncation.
+    """
+    lags = np.arange(1, len(rho) + 1)
+    corrected = q + 2.0 * float(np.sum((q - lags) * rho))
+    return q / np.sqrt(corrected) if corrected > 0 else float("nan")
+
+
+def autocorrelations(x: np.ndarray, max_lag: int) -> np.ndarray:
+    """Sample autocorrelations rho_1..rho_max_lag (standard biased ACF: divide every lag by the
+    lag-0 sum, so |rho_k| <= 1)."""
+    x = np.asarray(x, float)
+    x = x - x.mean()
+    denom = float(np.sum(x * x))
+    if denom == 0:
+        return np.zeros(max_lag)
+    return np.array([float(np.sum(x[k:] * x[:-k]) / denom) for k in range(1, max_lag + 1)])
+
+
+def lo_annualized_sharpe(daily: np.ndarray, q: int = 365, max_lag: int = 10) -> dict[str, float]:
+    """Lo-adjusted annualised Sharpe of a per-period (here daily) P&L / return series.
+
+    Steps: (1) per-period Sharpe SR = mean/std(ddof=1); (2) estimate rho_1..rho_max_lag; (3) the
+    Lo factor eta(q) with the sum truncated at max_lag (you cannot estimate q-1=364 lags from a
+    short sample, so truncate where rho is still estimable and report a couple of max_lag values);
+    (4) SR_ann_lo = eta * SR vs the naive SR_ann_iid = sqrt(q) * SR. The ratio SR_ann_lo /
+    SR_ann_iid = eta/sqrt(q) is the deflation factor. Scale (dollars vs return-on-capital) does
+    not matter -- the Sharpe is scale-invariant; only the autocorrelation structure does.
+    """
+    daily = np.asarray(daily, float)
+    n = len(daily)
+    sd = float(daily.std(ddof=1)) if n > 1 else 0.0
+    sr = float(daily.mean()) / sd if sd > 0 else float("nan")
+    max_lag = int(min(max_lag, n - 2)) if n > 2 else 0
+    rho = autocorrelations(daily, max_lag) if max_lag >= 1 else np.array([])
+    eta = lo_eta(rho, q)
+    return {
+        "n_days": float(n),
+        "active_days": float(int(np.count_nonzero(daily))),
+        "sr_period": sr,
+        "sr_ann_iid": np.sqrt(q) * sr,   # naive sqrt(q) annualisation
+        "sr_ann_lo": eta * sr,           # Lo autocorrelation-adjusted annualisation
+        "eta": eta,
+        "sqrt_q": float(np.sqrt(q)),
+        "deflation": eta / np.sqrt(q),   # SR_ann_lo / SR_ann_iid
+        "max_lag": float(max_lag),
+        "rho1": float(rho[0]) if len(rho) else float("nan"),
+        "sum_rho": float(np.sum(rho)),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trades", type=Path, default=DEFAULT_TRADES_PATH)
