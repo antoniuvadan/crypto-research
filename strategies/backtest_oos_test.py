@@ -89,8 +89,13 @@ def run_size(liq: pl.DataFrame, agg: pl.DataFrame, notional: float) -> pl.DataFr
     ).sort("decision_time")
 
 
-def add_book_features(df: pl.DataFrame) -> pl.DataFrame:
-    """One causal book pass: displacement (for trim) + mid path (for the floor)."""
+def add_book_features(df: pl.DataFrame, disp_from: datetime = DISP_FROM) -> pl.DataFrame:
+    """One causal book pass: displacement (for trim) + mid path (for the floor).
+
+    `disp_from` bounds where the (expensive) book pass starts; it defaults to the OOS
+    constant so existing callers are unchanged. Reusing this over the training window
+    requires passing the train warmup start so train events get their displacement.
+    """
     book = BookProvider()
     n = len(df)
     disp = np.full(n, np.nan)
@@ -99,7 +104,7 @@ def add_book_features(df: pl.DataFrame) -> pl.DataFrame:
     for i, t in enumerate(df.iter_rows(named=True)):
         if i % 100 == 0:
             _eprint(f"  book features {i}/{n}")
-        if t["decision_time"] < DISP_FROM:
+        if t["decision_time"] < disp_from:
             continue
         d = float(t["direction"])
         m_dec = book.as_of(t["decision_time"])
