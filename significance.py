@@ -25,6 +25,9 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import statsmodels.api as sm
+from scipy.stats import norm
+
+EULER_MASCHERONI = 0.5772156649015329
 
 DEFAULT_TRADES_PATH = Path("data/results/reversion_model_c_trades.csv")
 RESULTS_DIR = Path("data/results")
@@ -127,6 +130,70 @@ def lo_annualized_sharpe(daily: np.ndarray, q: int = 365, max_lag: int = 10) -> 
         "rho1": float(rho[0]) if len(rho) else float("nan"),
         "sum_rho": float(np.sum(rho)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Probabilistic Sharpe Ratio (PSR) and Deflated Sharpe Ratio (DSR)
+# Bailey & Lopez de Prado (2012, 2014).
+# ---------------------------------------------------------------------------
+
+def psr(returns: np.ndarray, sr_star: float = 0.0, n_eff: float | None = None) -> dict[str, float]:
+    """Probabilistic Sharpe Ratio: P(true Sharpe > sr_star), correcting for sample size and the
+    non-normality (skew, kurtosis) of returns.
+
+        PSR(SR*) = Phi[ (SR_hat - SR*) * sqrt(n - 1) / sqrt(1 - g3*SR_hat + ((g4 - 1)/4)*SR_hat^2) ]
+
+    SR_hat = per-observation Sharpe (mean/std, ddof=1); g3 = skewness; g4 = kurtosis (NON-excess,
+    normal = 3); Phi = standard normal CDF. The denominator is the standard error of the Sharpe
+    estimate: it grows with |SR_hat|, with negative skew, and with fat tails -- so those lower PSR.
+
+    `n_eff` overrides n in the sqrt(n-1) term: pass the number of independent CLUSTERS (episodes)
+    when the observations overlap, since the raw trade count overstates independence. PSR(0) is a
+    finite-sample, non-normality-robust one-sided significance statement on the Sharpe
+    (PSR(0) > 0.975 ~ significant at 5% one-sided; under normality PSR(0) ~ Phi(t_IID))."""
+    x = np.asarray(returns, float)
+    n = len(x)
+    mu = float(x.mean())
+    sd = float(x.std(ddof=1))
+    sr = mu / sd if sd > 0 else float("nan")
+    z = (x - mu) / sd  # standardised (sample sd); moments below are the standard estimators
+    g3 = float(np.mean(z ** 3))
+    g4 = float(np.mean(z ** 4))
+    nn = float(n if n_eff is None else n_eff)
+    var_sr = (1.0 - g3 * sr + (g4 - 1.0) / 4.0 * sr ** 2) / (nn - 1.0)
+    se = float(np.sqrt(var_sr)) if var_sr > 0 else float("nan")
+    return {
+        "sr_hat": sr, "skew": g3, "kurtosis": g4, "n": float(n), "n_used": nn,
+        "se_sr": se, "psr": float(norm.cdf((sr - sr_star) / se)) if se and se == se else float("nan"),
+        "sr_star": sr_star,
+    }
+
+
+def expected_max_sharpe(n_trials: int, var_sr: float) -> float:
+    """Expected MAXIMUM per-observation Sharpe across `n_trials` independent strategies whose true
+    Sharpe is 0 (the benchmark SR* the DSR must beat):
+
+        SR* = sqrt(var_sr) * [ (1 - gamma) * Z^-1(1 - 1/N) + gamma * Z^-1(1 - 1/(N*e)) ]
+
+    gamma = Euler-Mascheroni, Z^-1 = inverse normal CDF, var_sr = variance of the SR estimates
+    ACROSS the N trials. More trials => higher SR* (you expect a luckier best-of-N by chance)."""
+    if n_trials < 2:
+        return 0.0
+    z1 = norm.ppf(1.0 - 1.0 / n_trials)
+    z2 = norm.ppf(1.0 - 1.0 / (n_trials * np.e))
+    return float(np.sqrt(var_sr) * ((1.0 - EULER_MASCHERONI) * z1 + EULER_MASCHERONI * z2))
+
+
+def dsr(returns: np.ndarray, n_trials: int, var_sr: float, n_eff: float | None = None) -> dict[str, float]:
+    """Deflated Sharpe Ratio = PSR evaluated at SR* = expected max Sharpe of N trials. It is the
+    probability the strategy's true Sharpe beats what the LUCKIEST of N random trials would show,
+    i.e. PSR corrected for selection bias / backtest overfitting. Needs the trial count `n_trials`
+    and the cross-trial SR variance `var_sr` -- both judgement inputs; report over a range."""
+    sr_star = expected_max_sharpe(n_trials, var_sr)
+    out = psr(returns, sr_star=sr_star, n_eff=n_eff)
+    out["n_trials"] = float(n_trials)
+    out["var_sr_trials"] = var_sr
+    return out
 
 
 def main() -> None:
