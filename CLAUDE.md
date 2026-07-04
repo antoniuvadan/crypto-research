@@ -24,3 +24,7 @@ See ./PROJECT_BKG.md for details.
   code or tests to satisfy the adversarial agent. Go back and forth with the
   review agent until it deems the code and tests satisfactory.
 
+# Rigor
+- Be statistically rigorous in all analyses and all of your communication.
+- Always report Sharpe ratio and maximum drawdown for alphas.
+
