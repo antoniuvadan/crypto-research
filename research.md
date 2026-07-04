@@ -1184,3 +1184,91 @@ conclusion is scoped: **greedy first-come is rejected; concurrency risk is NOT d
    validated on **fresh** data (the OOS test set is spent, F10).
 2. Or a **direction/regime guard** so the book cannot become structurally one-way (the F11 ETH
    failure mode) — again, fresh data only.
+
+## Finding 13 — Clock-reset bounded cap: the "extend the hold" idea barely fires (cascades are second-scale bursts) and does not beat the greedy cap
+
+**Date:** 2026-07-04
+**Question:** F12 compared only *pile on* (uncapped) vs *ignore the new signal* (greedy skip),
+and greedy lost by anti-selecting on edge. Proposed third rule: hold a bounded book of at most N
+**same-direction** units, but when a new qualifying tail signal arrives while open, **reset the
+shared 5-min exit clock** (extend the hold) instead of piling on beyond N or ignoring it — build
+up to N units, then extend-only; all units flatten together at (last signal + 5min + latency).
+The hope: keep leverage bounded (the cap's risk win) but *use* the later cascade events to hold
+through more of the reversion (F5: holding is the edge), recovering the edge greedy discarded.
+
+**Scope & discipline:** TRAIN ONLY (OOS untouched); dev-select (2023-06-25→2024-02-24) +
+holdout-confirm (2024-02-25→2024-06-24); runs built **within each window** so a holdout signal
+can never extend a dev run. Fully **causal/deployable** — the exit fires 5min after the last
+*observed* signal (defer the resting exit on each new arrival), no look-ahead. N=5 primary (F12's
+significance-surviving cap), plus N=3 and single-unit extend-only N=1.
+**Method:** clock-reset changes *exit times*, so exits are **re-simulated** on the aggTrades tape
+with the same taker sweep (`_sweep_fill_from_agg_trades`) as F10/F12; the frozen `entry_*` fills
+are reused verbatim (they don't depend on the exit clock). Each bounded book flattens in one
+aggregated exit sweep.
+**Artifacts:** `strategies/concurrency_clock_reset.py`, `tests/test_concurrency_clock_reset.py`
+(12 tests). Reuses the F12 battery (`concurrency_train_caps.py`) + `cap_at_n` benchmark. Reviewed
+adversarially; framing/inference caveats and the partial-fill test folded in.
+
+### The mechanism killer: cascade events are second-scale bursts
+
+Within a chained run, consecutive same-direction tail signals have a **median gap of 1.1 s**
+(p90 2.2 s; **96% within 10 s**). So resetting a *5-minute* clock pushes it by ~1 s per event:
+the hold barely extends — clock-reset **median hold 5.1 min**, p90 5.4–5.9, max 7.8–9.6 (vs the
+5.0 min fixed baseline), despite ~3.1–3.2 resets/run and 74–84% multi-event runs. The premise
+(later events *materially* extend the hold) does not operate on this market.
+
+### Results (net bps of $50k; both DDs in $; ret/DD = window net ÷ |MtM DD|)
+
+**DEV (347 kept):**
+
+| Policy | trades | net bps | t_NW | t_clust | Sharpe√365 | realized DD | MtM DD | peak cap | ret/\|DD\| |
+|---|---|---|---|---|---|---|---|---|---|
+| uncapped | 347 | **34.68** | 3.59 | 3.02 | 3.26 | −4,461 | −47,860 | $900k | 1.26 |
+| greedy cap N=5 | 268 | 17.27 | 2.05 | 1.83 | 1.71 | −5,167 | −23,325 | $250k | 0.99 |
+| **clock-reset N=5** | 273 | 17.48 | 2.13 | 2.00 | 1.93 | −5,874 | −24,454 | $500k | 0.98 |
+| clock-reset N=3 | 204 | 12.65 | 1.67 | 1.57 | 1.59 | −4,525 | −15,091 | $300k | 0.86 |
+| clock-reset N=1 | 82 | 11.41 | 1.57 | 1.62 | 1.78 | −1,882 | −5,271 | $100k | 0.89 |
+
+**HOLDOUT (156 kept):**
+
+| Policy | trades | net bps | t_NW | t_clust | Sharpe√365 | MtM DD | peak cap | ret/\|DD\| |
+|---|---|---|---|---|---|---|---|---|
+| uncapped | 156 | **51.01** | 3.22 | 2.77 | 4.21 | −18,629 | $600k | 2.14 |
+| greedy cap N=5 | 119 | **31.44** | 2.05 | 1.71 | 2.63 | −12,994 | $250k | 1.44 |
+| **clock-reset N=5** | 119 | 25.13 | **1.52** | 1.26 | 1.89 | −13,183 | $250k | 1.13 |
+| clock-reset N=3 | 88 | 27.25 | 1.67 | 1.40 | 2.07 | −8,270 | $150k | 1.45 |
+| clock-reset N=1 | 38 | 23.67 | 1.58 | 1.37 | 2.01 | −3,084 | $50k | 1.46 |
+
+**Dev-selected clock-reset = N=5** (max √365 Sharpe among t_NW≥2). It **fails to confirm on the
+holdout**: 25.13 bps, **t_NW 1.52 (not significant)**, and it is **below greedy N=5's 31.44**.
+
+### Read
+
+- **Clock-reset ≈ greedy on dev, WORSE on holdout.** Because the clock barely extends, clock-reset
+  collapses onto the greedy cap (dev 17.48 vs 17.27) — which F12 already rejected — and on the
+  holdout it underperforms greedy (25.13 vs 31.44) and loses significance.
+- **The dev "win" is a t_NW artifact.** N=5's dev t_NW 2.13 is not backed by the honest
+  episode-clustered t (**t_clust 2.00 dev, 1.26 holdout**); a bounded book's units share one exit
+  and are near-perfectly correlated, so t_NW overstates significance. No clock-reset variant is
+  robustly significant even on dev.
+- **The negative result is not a modelling artifact** (adversarially checked): (i) clock-reset
+  caps N *per direction* (≤2N total; dev peak cap $500k vs greedy's $250k), so it runs with the
+  **looser** capital budget and still loses — exculpatory, not a handicap; (ii) the synchronized
+  aggregated book-flatten is a worst-case exit (spread_exit −1.8…−2.2 vs greedy −0.8…−1.3, ~1 bp)
+  but far short of the ~6 bp holdout gap to greedy — the larger effect is lower per-unit gross-mid.
+- **Nothing beats uncapped** on Sharpe or ret/|MtM DD|, on either window (as in F12).
+
+### Verdict
+
+**Clock-reset is rejected.** It barely differs from the greedy cap F12 already rejected, and
+underperforms it out-of-sample-within-train, because the edge it targets — later cascade events
+extending the hold — doesn't exist at scale here: **liquidation cascades fire within ~1 second**,
+so a 5-min clock never meaningfully extends. Manipulating the *exit clock* is the wrong lever.
+
+### Next steps
+
+1. The remaining deployable lever is a **causal displacement-gated ENTRY** (enter only on the
+   first event clearing a train-estimated displacement bar, then lock out — capturing the violent
+   event *without* look-ahead), not exit-clock manipulation. Validate on **fresh** data.
+2. The extend-the-hold idea would only matter for an instrument/signal whose qualifying events are
+   spaced over **minutes**, not seconds — not BTCUSD_PERP liquidation cascades.
