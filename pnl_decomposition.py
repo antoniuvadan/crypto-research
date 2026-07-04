@@ -46,6 +46,39 @@ def _epoch_ns(col: str) -> pl.Expr:
     return pl.col(col).dt.epoch("ns").alias("ts_ns")
 
 
+def add_decomposition(df: pl.DataFrame) -> pl.DataFrame:
+    """Add the 6 additive bps components + reconstruction to a frame that already carries the
+    per-trade reference mids in columns `decision`/`entry`/`exit` (plus `entry_vwap`,
+    `exit_vwap`, `direction`, `net_pnl`, `entry_quantity`).
+
+    Split out of `main()` so other callers (e.g. the concurrency cap study) reuse the exact
+    formula rather than duplicating it. All price terms share the denominator `decision`
+    (mid at decision) so they are additive: `net_reconstructed == net_realized` to L1 resolution.
+    """
+    d = pl.col("direction").cast(pl.Float64)  # +1 long, -1 short
+    denom = pl.col("decision")  # common per-trade denominator for additivity
+    bps = 1e4
+    return df.with_columns(
+        gross_mid_to_mid=bps * d * (pl.col("exit") - pl.col("decision")) / denom,
+        latency_slippage=bps * d * (pl.col("entry") - pl.col("decision")) / denom,
+        spread_entry=bps * d * (pl.col("entry_vwap") - pl.col("entry")) / denom,
+        spread_exit=bps * d * (pl.col("exit") - pl.col("exit_vwap")) / denom,
+        fee_entry=pl.lit(bps * FEE_RATE),
+        fee_exit=pl.lit(bps * FEE_RATE),
+    ).with_columns(
+        net_reconstructed=(
+            pl.col("gross_mid_to_mid")
+            - pl.col("latency_slippage")
+            - pl.col("spread_entry")
+            - pl.col("spread_exit")
+            - pl.col("fee_entry")
+            - pl.col("fee_exit")
+        ),
+        # Realized net straight from the backtest, in bps of traded notional.
+        net_realized=bps * pl.col("net_pnl") / (pl.col("entry_quantity").abs() * 100.0),
+    )
+
+
 def lookup_mids(lookups: pl.DataFrame) -> pl.DataFrame:
     """
     lookups: columns [tid, role, ts (Datetime UTC)].
@@ -130,31 +163,7 @@ def main() -> None:
     if dropped:
         print(f"[warn] dropped {dropped}/{n_before} trades missing a reference mid", file=sys.stderr)
 
-    d = pl.col("direction").cast(pl.Float64)  # +1 long, -1 short
-    denom = pl.col("decision")  # common per-trade denominator for additivity
-    bps = 1e4
-
-    df = df.with_columns(
-        gross_mid_to_mid=bps * d * (pl.col("exit") - pl.col("decision")) / denom,
-        latency_slippage=bps * d * (pl.col("entry") - pl.col("decision")) / denom,
-        spread_entry=bps * d * (pl.col("entry_vwap") - pl.col("entry")) / denom,
-        spread_exit=bps * d * (pl.col("exit") - pl.col("exit_vwap")) / denom,
-        fee_entry=pl.lit(bps * FEE_RATE),
-        fee_exit=pl.lit(bps * FEE_RATE),
-    ).with_columns(
-        net_reconstructed=(
-            pl.col("gross_mid_to_mid")
-            - pl.col("latency_slippage")
-            - pl.col("spread_entry")
-            - pl.col("spread_exit")
-            - pl.col("fee_entry")
-            - pl.col("fee_exit")
-        ),
-        # Realized net straight from the backtest, in bps of traded notional.
-        net_realized=bps
-        * pl.col("net_pnl")
-        / (pl.col("entry_quantity").abs() * 100.0),
-    )
+    df = add_decomposition(df)
 
     component_cols = [
         "gross_mid_to_mid",

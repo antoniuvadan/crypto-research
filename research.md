@@ -1095,3 +1095,92 @@ COIN-M liquidation cascades as currently defined.
    ETH window (now informative) or the BTC test set (spent).
 2. Optional context (cheap, nothing spent on ETH): run the ETH **train** period to see
    whether ETH ever showed the edge, or whether it's absent on ETH in all regimes.
+
+## Finding 12 — Deployable concurrency caps (train only): the greedy first-come cap is the wrong tool
+
+**Date:** 2026-07-03
+**Question (from CONCURRENCY_ANALYSIS.md):** the frozen reversion strategy pyramids up to 18
+one-directional positions per cascade; capping concurrency was recommended. Does a **causal,
+deployable** concurrency cap improve the strategy on the training data — and which limit
+(no-stack N=1, N≤3, N≤5, or uncapped) does best?
+
+**Scope & discipline:** TRAIN ONLY; the reserved OOS test set is untouched. **Select on the dev
+window** (2023-06-25 → 2024-02-24, 347 kept trades), **confirm on the within-train holdout**
+(2024-02-25 → 2024-06-24, 156 kept — matches F7's holdout n); the holdout never informs the
+choice. **No look-ahead:** the cap is the greedy **first-come** rule (open only if < N are
+already open, else SKIP the arriving bet) — a pure causal filter on the already-realized frozen
+$50k trades. The most-violent-per-cascade oracle (`dedupe_per_episode`) is deliberately **not**
+used (it peeks at the whole cascade). Pre-registered selection metric: highest √365 Sharpe among
+policies with t_NW ≥ 2, ties → smaller MtM drawdown.
+**Artifacts:** `strategies/concurrency_train_caps.py`, `tests/test_concurrency_train_caps.py`
+(17 tests), summary `data/results/concurrency_train_caps_summary.csv`. Reuses `cap_at_n` /
+`subset_metrics` (`concurrency_analysis.py`), `mtm_max_drawdown` / `realized_close_dd`
+(`backtest_oos_risk.py`), and `pnl_decomposition.add_decomposition`. Reviewed adversarially;
+findings folded in.
+
+### Results (net bps of $50k; DD in $; ret/DD = window net $ ÷ |MtM DD|)
+
+**DEV (347 kept):**
+
+| Policy | trades | net bps | t_NW | t_clust | Sharpe√365 | realized DD | **MtM DD** | peak cap | ret/\|MtM DD\| |
+|---|---|---|---|---|---|---|---|---|---|
+| uncapped (N=∞) | 347 | **34.68** | **3.59** | 3.02 | **3.26** | −4,461 | **−47,860** | $900k | **1.26** |
+| cap N=5 | 268 | 17.27 | 2.05 | 1.83 | 1.71 | −5,167 | −23,325 | $250k | 0.99 |
+| cap N=3 | 201 | 12.71 | 1.56 | 1.49 | 1.45 | −3,746 | −14,225 | $150k | 0.90 |
+| cap N=1 (no concurrency) | 81 | 12.25 | 1.45 | 1.66 | 1.70 | −1,524 | **−4,823** | $50k | 1.03 |
+
+**HOLDOUT (156 kept):**
+
+| Policy | trades | net bps | t_NW | t_clust | Sharpe√365 | realized DD | **MtM DD** | peak cap | ret/\|MtM DD\| |
+|---|---|---|---|---|---|---|---|---|---|
+| uncapped (N=∞) | 156 | **51.01** | **3.22** | 2.77 | **4.21** | −3,805 | **−18,629** | $600k | **2.14** |
+| cap N=5 | 119 | 31.44 | 2.05 | 1.71 | 2.63 | −2,754 | −12,994 | $250k | 1.44 |
+| cap N=3 | 88 | 32.23 | 2.10 | 1.74 | 2.70 | −1,706 | −7,808 | $150k | 1.82 |
+| cap N=1 (no concurrency) | 38 | 25.57 | 1.73 | 1.48 | 2.38 | −1,286 | −3,472 | $50k | 1.40 |
+
+**Dev-selected policy: UNCAPPED** (highest √365 Sharpe among the two policies clearing t_NW ≥ 2:
+uncapped 3.26 vs N=5 1.71). It **confirms on the holdout**: +51.01 bps, t_NW 3.22, t_clust 2.77,
+Sharpe 4.21.
+
+### What the cap actually does
+
+1. **It cuts risk in ABSOLUTE terms — a lot.** MtM drawdown falls ~10× (dev −$47.9k → −$4.8k at
+   N=1; holdout −$18.6k → −$3.5k) and peak capital 18× ($900k → $50k). A book with a fixed
+   *dollar* drawdown budget strictly prefers the cap.
+2. **But RETURN falls faster, so every risk-adjusted ratio favours uncapped** — on Sharpe (3.26
+   vs ≤1.71) **and** on the MtM-aware ret/|MtM DD| Calmar (dev 1.26 vs ≤1.03; holdout 2.14 vs
+   ≤1.82), on **both** windows. The Calmar cross-check matters because the √365 Sharpe books only
+   realized closes and is blind to the very MtM pain the cap targets; here both metrics agree.
+3. **Why the edge collapses: greedy first-come ANTI-SELECTS on edge.** The reversion edge builds
+   as a cascade intensifies (F3/F6), so keeping the *earliest* event of each cascade keeps the
+   low-edge one. Cost decomposition confirms it: mean gross-mid signal drops (dev 42.6 → 21.5
+   bps) while fees (10 bps round-trip) and spread (~2 bps) are fixed, so caps shed *signal*, not
+   cost.
+4. **Drawdown is NOT driven by the top-P&L day on train** (mtm_dd_topday_share ≈ 0%): the P&L
+   peaks on 2024-01-09 (dev) / 2024-03-05 (holdout) but the equity troughs elsewhere
+   (2023-06-30 dev / 2024-02-28 holdout). Contrast OOS F10, where one crash day drove 86% of DD.
+   Concentration shares are also **non-monotone** in N (N=1 sits below N=3), so "caps concentrate
+   P&L" is not a clean effect.
+
+### Verdict
+
+**The greedy first-come concurrency cap is the wrong tool.** On train it trades away more edge
+than drawdown and loses significance (N=3/N=1 fall below t_NW 2), so uncapped dominates it on
+every risk-adjusted measure across dev and holdout. **This is not "no causal cap can win"** —
+only that *this* causal family does, by construction, throw away the high-edge late-cascade
+trades.
+
+**Essential caveat that bounds the whole result:** a single train window **cannot realise the
+rare one-directional cascade tail the cap exists to defend against** (the OOS 2024-08-05 pyramid
+that was 86% of DD; the ETH F11 all-long run-over). "Uncapped wins on train" is the
+*pick-up-pennies* reading — good realized Calmar in windows that did not contain the tail. So the
+conclusion is scoped: **greedy first-come is rejected; concurrency risk is NOT dismissed.**
+
+### Next steps
+
+1. The deployable candidate remains a **causal displacement-gated entry** (enter only on the
+   first event clearing a train-estimated displacement bar, then lock out for the hold) — it
+   keeps the *violent* event without look-ahead, unlike first-come. Must be designed and
+   validated on **fresh** data (the OOS test set is spent, F10).
+2. Or a **direction/regime guard** so the book cannot become structurally one-way (the F11 ETH
+   failure mode) — again, fresh data only.
