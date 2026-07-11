@@ -1272,3 +1272,103 @@ so a 5-min clock never meaningfully extends. Manipulating the *exit clock* is th
    event *without* look-ahead), not exit-clock manipulation. Validate on **fresh** data.
 2. The extend-the-hold idea would only matter for an instrument/signal whose qualifying events are
    spaced over **minutes**, not seconds — not BTCUSD_PERP liquidation cascades.
+
+## Finding 14 — Honest significance of the frozen edge: Lo-adjusted Sharpe, PSR, and DSR
+
+**Date:** 2026-07-04 (documented 2026-07-11)
+**Question:** how significant is the frozen reversion edge once you correct the Sharpe honestly —
+for autocorrelation (annualisation), for finite sample + non-normality (PSR), and for
+multiple-testing / backtest-overfitting (DSR)? Motivated by resume/interview framing: the naive
+√365 Sharpe (~4.5 OOS) is unrealistically high, yet only the uncapped version is significant.
+**Artifacts (reusable stats added to `significance.py`):** `lo_eta` / `autocorrelations` /
+`lo_annualized_sharpe` (Lo 2002); `psr` / `expected_max_sharpe` / `dsr` (Bailey & López de Prado
+2012/2014). Drivers `strategies/sharpe_lo_adjustment.py`, `strategies/psr_dsr_report.py`. Tests
+`tests/test_sharpe_lo.py` (11), `tests/test_psr_dsr.py` (8) — validated against closed-form/hand
+values. No new backtests; all computed on the already-realised trade CSVs.
+
+### Trade / sample counts (frozen = trim-filtered `keep==True`; the unbounded strategy trades all)
+
+| set | trades | episodes (n_eff) | trading days | of qualifying tail events |
+|---|---|---|---|---|
+| TRAIN full (2023-06-25→2024-06-24) | 503 (347 dev + 156 holdout) | 119 | 58 dev + 27 holdout = 85 | 969 (52% kept) |
+| OOS (2024-06-25→2024-10-14) | 105 | 29 | 22 | 245 (43% kept) |
+
+### 1. Lo (2002) autocorrelation adjustment — a NO-OP here (and why)
+
+The naive `SR_ann = √365·SR_daily` assumes IID days. Lo's correct factor is
+`η(q)=q/√(q+2·Σ_{k=1}^{L}(q−k)·ρ_k)`. **On the daily P&L series ρ₁ ≈ −0.01 → η ≈ √365 → Lo ≈ naive
+(4.46 OOS unchanged).** Reason: the strategy's overlap (up to 18 concurrent) is **intraday**
+(5-min holds close same day), so it washes out at the daily level and daily returns are ~IID. So
+the √365 Sharpe is **not** inflated by autocorrelation. Two caveats: (a) at q=365 on ~112 days the
+estimate is **truncation-unstable** (η swings 15.9–22.3 across L∈{1,5,10,20}) because the (q−k)
+weights amplify autocorrelation-estimation noise; (b) the real reason ~4.5 is unrealistic is
+**sampling error** (sparse: 22 active OOS days), not autocorrelation — that is the PSR/CI's job.
+Per-trade *overlap* is a separate matter, already handled by Newey-West (t: ~4.8 IID → **2.62**).
+
+### 2. PSR(0) = P(true Sharpe > 0), per-trade, skew/kurtosis + effective-n corrected
+
+`PSR(SR*)=Φ[(SR̂−SR*)√(T−1) / √(1−γ₃·SR̂+((γ₄−1)/4)·SR̂²)]`. Using **T = episodes** (overlap-honest):
+
+| strategy | per-trade SR̂ | skew | kurt | **PSR(0)** |
+|---|---|---|---|---|
+| **OOS uncapped** | 0.467 | **−1.01** | 6.9 | **0.968** |
+| TRAIN full uncapped | 0.385 | +1.13 | 5.6 | ~1.000 |
+
+The OOS 0.968 (≈ one-sided p 0.032) is dragged below ~1.0 by the **left tail** (skew −1.0: occasional
+big adverse cascades) and the small effective sample (29 episodes). The three dependence-corrected
+significance figures bracket the edge: **Newey-West t 2.62** (least conservative) → **PSR(0) 0.968**
+(most conservative, also penalises the fat left tail). For the hold-out this, not DSR, is the honest
+statistic (the hold-out already controls selection bias — a train-N DSR would double-count).
+
+### 3. DSR = PSR at SR* (expected max Sharpe of N trials) — uncapped survives, caps do not
+
+Full-train uncapped, T=119 episodes, V=0.0084 (cross-trial SR variance proxy from 8 train policies):
+
+| N (trials) | SR* | **DSR** |
+|---|---|---|
+| 12 (≈ distinct ideas) | +0.153 | 0.998 |
+| **25–30** (effective independent) | +0.183…+0.190 | **0.995–0.993** |
+| 60 (≈ raw grid cells) | +0.215 | 0.984 |
+
+**DSR ≥ 0.98 across the entire plausible N range (12–60).** N enumeration from the research log:
+raw grid cells ≈ 57 (F1/F2 holding×size×direction ≈20, F3 bands ≈10, F4 long horizons 8, F5 exits
+≈10, F6/F7 trim ≈6, F8 maker 3); collapsing correlated neighbours → **~25–30 effectively
+independent** trials. What drives the high DSR (term decomposition at N=30): `√(T−1)=10.86`
+dominates; SR̂=0.385 sits ~2× above SR*≈0.19; **positive skew helps** (−γ₃·SR̂=−0.436 shrinks the SE
+to 0.857) → z=2.47 → Φ=0.993. **The greedy caps do NOT survive:** their DSR collapses to 0.31–0.76,
+so once you account for the search they are indistinguishable from best-of-N luck — a stronger
+statement than "t<2". **Uncapped is the only version robust to both non-normality and multiple
+testing.**
+
+### 4. Effective sample size (T): episodes vs traded days
+
+T should be the coarsest unit at which returns are ~independent. Candidates (OOS): raw trades 105
+(wrong — overstates), **episodes 29** (used; assumes cascades independent), **traded days 22** (more
+defensible — same-day cascades may share a driver, and daily ρ₁≈−0.01 *verifies* daily independence;
+a day can't be less independent than its episodes), Kish N_eff 16 (most conservative). All give a
+consistent t≈2.5 (episodes 0.467·√29≈2.5; daily 0.233·√112≈2.5; NW 2.62), so the conclusion is
+robust to the choice. **Recommendation:** headline the daily/traded-day basis (verified
+independence); episodes as cross-check; never raw trades.
+
+### 5. Drawdown (OOS uncapped) and the agreed résumé framing
+
+OOS uncapped **mark-to-market** max DD = **−$22,770 = −2.53%** of $900k peak capital (realized-close
+only −$6,571/−0.7%; MtM is the honest one — it marks the ≤18 concurrent open legs). **86% of it is a
+single day (2024-08-05)** the book was pyramided ~18× long into — the one-directional tail the caps
+target but train windows didn't contain. Résumé line settled on (each stat in its correct regime):
+
+> *Reversion alpha in Binance BTC-perp liquidation cascades: **+48.9 bps net/trade out-of-sample**
+> (Newey-West t = 2.6; PSR(0) = 0.97) on a reserved test set, **−2.5% mark-to-market max drawdown**;
+> **in-sample Deflated Sharpe ≈ 0.99** across ~25 backtested configurations, both directions
+> profitable after realistic taker fills and fees.*
+
+Report **significance** (robust), not the flattered Sharpe magnitude; **DSR for the searched
+in-sample period, PSR for the held-out set**; keep the concurrency/tail-risk analysis (F12/F13, 18×
+pyramid) as the "did you overfit / what's the risk" interview answer, not a résumé line.
+
+### Verdict / next
+
+The frozen edge (F10) is **robust to honest significance corrections**: OOS PSR(0) 0.968, in-sample
+DSR ≈ 0.99, and its √365 Sharpe is not autocorrelation-inflated (Lo no-op). The *risk*, not the
+significance, is the deployment concern (one-directional tail; F12/F13 caps reduce it but cost
+edge). New alpha work still needs **fresh data** (BTC test set spent, F10).
