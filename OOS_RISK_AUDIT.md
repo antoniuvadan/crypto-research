@@ -123,6 +123,15 @@ upward bias — read it as "even generously framed, the point estimate is this u
 **The honest anchor is the per-trade IR 0.467 / t_NW 2.62.** The annualized 4.46 is an
 optimistic convention, not a robust number.
 
+> **Superseded by Finding 15** (`strategies/oos_sharpe_report.py`), which consolidates these
+> figures onto the conservative fill floor and goes further: the annualized Sharpe moves
+> **5.16 → 4.15 → 2.53** with the window end date alone (the strategy's last trade is
+> 2024-09-06, so ~34% of the window is signal-dead), one day is **39%** of the P&L, and on
+> the traded-day sample the 90% interval **includes zero**. The percentile bootstrap CI
+> quoted above is also centred ~+0.4 too high; the basic (reverse-percentile) form is the
+> corrected one. F15's verdict: report the per-trade edge, PSR(0) and the MtM drawdown —
+> not the annualized Sharpe.
+
 ---
 
 ## 4. Participation-cap slippage stress
@@ -139,9 +148,18 @@ from *other* traders; the strategy's own overlapping legs still each sweep the f
 | 0.20 | 105 | 62% | 453ms | **+47.62** | 2.58 | −$22,766 |
 | 0.10 | 105 | 60% | 717ms | **+46.84** | 2.54 | −$22,765 |
 
-Even taking only **10% of each print** (leaving ~40% of trades partially filled) the edge
-holds at **+46.8 bps, t_NW 2.54**, right beside the F9 flat-bps floor (~+39–43). Strong
-evidence the edge is **not** a liquidity-capture artifact.
+Even taking only **10% of each print** the edge holds at **+46.8 bps, t_NW 2.54**, right
+beside the F9 flat-bps floor (~+39–43). Strong evidence the edge is **not** a
+liquidity-capture artifact.
+
+> **Correction (2026-08-12, found during the F15 review).** An earlier version of this
+> section read the `entry complete` column as "leaving ~40% of trades partially filled".
+> That is **wrong**. Every trade at every α fills exactly **500.0 contracts** — the
+> shortfall on the ~40% flagged incomplete is ~3e-13 contracts (≈$3e-11), a floating-point
+> artifact of the `filled_abs >= requested_abs` comparison in `backtester.py:557`. The
+> participation cap degraded fill **VWAPs** (median fill time 114ms → 717ms); it never left
+> a trade unfilled. The stress conclusion is unchanged — if anything the cap is a *weaker*
+> stress than described, since it tested price degradation only, not incomplete execution.
 
 ---
 

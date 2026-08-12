@@ -1372,3 +1372,139 @@ The frozen edge (F10) is **robust to honest significance corrections**: OOS PSR(
 DSR ≈ 0.99, and its √365 Sharpe is not autocorrelation-inflated (Lo no-op). The *risk*, not the
 significance, is the deployment concern (one-directional tail; F12/F13 caps reduce it but cost
 edge). New alpha work still needs **fresh data** (BTC test set spent, F10).
+
+---
+
+## Finding 15 — The OOS Sharpe ratio, computed properly: **+4.15 annualized**, and why that number should not be the headline
+
+**Date:** 2026-08-12
+**Question:** produce a single defensible annualized Sharpe ratio for the frozen strategy's
+out-of-sample performance. F10 reported 4.46, the audit reported 4.97 active-days-only and a
+bootstrap CI, F14 added Lo/PSR/DSR — all on the optimistic realized-fill basis and scattered
+across three drivers with their conventions undocumented at the point of use.
+**Artifacts:** `strategies/oos_sharpe_report.py` (+ `data/results/oos_sharpe_report.csv`);
+`block_bootstrap_sharpe_dist` refactored out of `block_bootstrap_sharpe_ci` in
+`backtest_oos_risk.py`; tests `tests/test_oos_sharpe_report.py` (43).
+**No new backtests.** Every statistic is computed from already-realized trade CSVs; nothing was
+re-fitted and the floor `s`-grid is frozen from F9. The spent test set was not re-executed.
+
+### Conventions (all four are choices; stating them is half the deliverable)
+
+| Convention | Choice | Why |
+|---|---|---|
+| Risk-free | **rf = 0** | Futures are self-financing; P&L over notional is already an excess return with collateral in bills. A cash-drag counterfactual is reported separately and must **not** be averaged with the headline. |
+| Cost basis | **conservative floor, s = 3 bps/side** | `gross_mid − latency_slip − 2s − 10` (F9/F10). Realized-sweep fills are optimistic; F9/F10 called the floor "the number to believe". |
+| Day count | **all 112 calendar days**, idle = 0 | Crypto trades 24/7; more conservative than dropping idle days (4.15 vs ~5). |
+| Annualization | **×√365** | See the caveat below — this is the weakest of the four. |
+
+**Sharpe is scale-invariant.** The $900k peak-capital base moves the drawdown percentage and the
+ROI; it never moves the Sharpe. Only the cash-drag counterfactual depends on it.
+
+### The answer
+
+**Annualized Sharpe +4.15** (conservative floor, ×√365, rf = 0, 112 calendar days / 22 active),
+per-trade IR +0.390, mean net +41.13 bps, **t_NW 2.18**, **MtM max drawdown −$22,770 = −2.53%**
+of peak capital.
+
+| cost basis | mean net bps | t_NW | **SR_ann** | 90% CI (bootstrap, basic) | PSR(0) episodes |
+|---|---|---|---|---|---|
+| **floor s=3 (headline)** | **+41.13** | **2.18** | **+4.15** | **[+1.59, +5.15]** | 0.947 |
+| realized-sweep (F10 control) | +48.85 | 2.62 | +4.46 | [+1.74, +5.45] | 0.968 |
+| participation cap 0.20 | +47.63 | 2.59 | +4.39 | [+1.69, +5.39] | 0.966 |
+| participation cap 0.10 | +46.84 | 2.54 | +4.35 | [+1.69, +5.36] | 0.964 |
+| floor s=2 | +43.14 | 2.28 | +4.24 | [+1.64, +5.24] | 0.953 |
+| floor s=4 | +39.14 | 2.07 | +4.06 | [+1.53, +5.05] | 0.940 |
+
+The realized-sweep row reproduces F10 exactly (+48.85 bps, IR 0.467, ann 4.46, t_NW 2.62) and the
+floor rows reproduce F10's published +43.13/+41.13/+39.13 — locked as regression tests, so this is
+a *restatement* of the frozen result, not a re-derivation of a different one. `psr0_episodes` for
+the realized row independently recovers F14's published 0.968.
+
+### Why the number should not be the headline — four independent reasons
+
+**1. It is a function of where the window ends.** The strategy's **last kept trade is 2024-09-06**:
+the trim gated out every later event (Sep 7/51 kept, **Oct 0/30**), so ~34% of the published window
+is a stretch in which the signal was switched off. Since `SR_ann ∝ 1/√T`:
+
+| window | T | SR_ann |
+|---|---|---|
+| to last trade (2024-09-06) | 74 | **+5.16** |
+| **as published (2024-10-14)** | 112 | **+4.15** |
+| + 6 more idle months | 294 | +2.53 |
+
+The window was **pre-registered**, so this is not cherry-picking — but the headline is a boundary
+artifact to that degree, and a one-year hold would show ~2.3.
+
+**2. One day is 39% of the P&L.** 2024-08-05 (the one-directional cascade the book pyramided ~18×
+long into; per F14 also **86% of the MtM drawdown**) is 39% of total P&L; the top 3 days are 58%.
+Zeroing it *raises* the Sharpe to +5.54 — it carries more variance than mean, so it simultaneously
+supplies a quarter of the edge and suppresses the ratio.
+
+**3. The three CI methods disagree by more than the point estimate is worth**, and the empirical
+sampling SD from the bootstrap (**1.08**) shows why: the daily series is **90/112 exact zeros**,
+giving skew +7.5 and kurtosis 68.4.
+
+| method | 90% CI | ann SE | verdict |
+|---|---|---|---|
+| **bootstrap, basic (reverse-percentile)** | **[+1.59, +5.15]** | 1.08 | **primary** — resamples the observed zero-inflated structure |
+| Gaussian (Jobson-Korkie/Lo) | [+1.14, +7.17] | 1.83 | ~1.7× too **wide**; asserts g₃=0, g₄=3 against the sample |
+| moment-corrected (PSR/Mertens) | [+2.94, +5.37] | 0.74 | ~0.7× too **narrow**; the skew term goes negative (−0.63) and pins PSR(0) at 1.000 for *every* basis |
+| bootstrap, raw percentile | [+3.16, +6.72] | — | centred **+0.41 too high** (resamples drawing more active days score higher) — not quoted |
+
+Neither closed form is quotable: one asserts moments the sample contradicts, the other trusts
+moments the zero-inflation makes meaningless. *Direction* of the mis-calibration is a property of
+this series, not of zero-inflation generally (a synthetic zero-inflated series errs the other way).
+
+**4. On the effective sample, the interval includes zero.** Every CI above assumes 112 independent
+observations. F14 §4's recommendation is the traded-day basis:
+
+| basis | n | ann CI / PSR(0) |
+|---|---|---|
+| daily, all calendar days | 112 | [+1.14, +7.17] |
+| **daily, traded days only** | **22** | **[−2.78, +11.09] — spans zero** |
+| per-trade PSR(0), raw trades | 105 | 0.999 |
+| per-trade PSR(0), episodes | 29 | 0.947 |
+| **per-trade PSR(0), traded days** | **22** | **0.919** — below the 0.95 line |
+| per-trade PSR(0), Kish n_eff (computed, = 15.96) | 16 | 0.881 |
+
+### The √365 annualizer is itself uncertain — and F14's defence of it does not hold
+
+F14 concluded Lo's η ≈ √365, i.e. the Sharpe is not autocorrelation-inflated. **The supporting
+statistic has no power here.** Under the observed 90/112 idle-day mask, a series with a *true*
+daily AR(1) of 0.5 still measures ρ̂₁ ≈ +0.07 (5–95%: −0.05…+0.25), so the observed **−0.014 is
+fully consistent with substantial true autocorrelation**. Read Lo's correction as *uninformative*
+here, not as *independence confirmed*. Separately, η swings **17.9–23.9** across truncations
+L ∈ {1,5,10,20} — the annualizer is uncertain by ~25% before any sampling error. (F14's *mechanism*
+argument — 5-min holds close intraday, so overlap washes out daily — is untouched; only the
+empirical ρ̂₁ evidence is withdrawn.)
+
+### Verdict
+
+**+4.15 is the correctly-computed answer to the question asked, and computing it correctly is what
+demonstrates it should not be quoted as a headline.** The magnitude is not estimable from 22 active
+days dominated by one of them.
+
+**Quote instead**, all on the conservative floor basis: **+41.13 bps net per trade (Newey-West
+t 2.18)**, **PSR(0) 0.88–0.95** across defensible effective-sample choices (episodes 0.947, traded days 0.919, Kish n_eff 0.881 — never the raw-trade 0.999), and **−2.53% mark-to-market max
+drawdown**. Those survive every correction applied here. This is the same place F14 landed —
+*report significance, not the flattered Sharpe magnitude* — reached independently and with the
+Sharpe now actually computed rather than deferred. F14's résumé line stands; it should not gain a
+Sharpe number.
+
+### Corrections to earlier work
+
+- **`OOS_RISK_AUDIT.md` §4 was wrong** that the participation cap left "~40% of trades partially
+  filled". Every trade at every α fills exactly **500.0 contracts**; the shortfall on the flagged
+  ~40% is ~3e-13 contracts, a floating-point artifact of `filled_abs >= requested_abs`
+  (`backtester.py:557`). The cap degraded fill VWAPs only. Conclusion unchanged, stress slightly
+  weaker than described. Corrected in place.
+- The audit's percentile bootstrap CI **[+3.46, +7.18]** is centred too high; the basic form is
+  the corrected one.
+
+### Next steps
+
+Unchanged from F14: the BTC test set is spent, so new alpha work needs **fresh data**. If a Sharpe
+number is ever required for a deployment case, it needs a longer window with more active days —
+not a better estimator on this one.
+
+---

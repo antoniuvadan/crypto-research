@@ -212,10 +212,14 @@ def daily_pnl_series(trades: pl.DataFrame) -> np.ndarray:
     return cal["net_pnl"].to_numpy()
 
 
-def block_bootstrap_sharpe_ci(daily: np.ndarray, block: int = 7, n_boot: int = 5000,
-                              seed: int = 0) -> tuple[float, float, float]:
-    """Circular block-bootstrap CI on the sqrt(365)-annualized daily Sharpe. Blocks
-    preserve short-horizon autocorrelation that the IID sqrt(365) scaling ignores."""
+def block_bootstrap_sharpe_dist(daily: np.ndarray, block: int = 7, n_boot: int = 5000,
+                                seed: int = 0) -> np.ndarray:
+    """Circular block-bootstrap DISTRIBUTION of the sqrt(365)-annualized daily Sharpe. Blocks
+    preserve short-horizon autocorrelation that the IID sqrt(365) scaling ignores.
+
+    Returned rather than immediately reduced to percentiles because the spread of this
+    distribution is the empirical estimate of the Sharpe's sampling SD -- the only arbiter
+    available when the closed-form SEs (Gaussian vs moment-corrected) disagree by 2.5x."""
     rng = np.random.default_rng(seed)
     m = len(daily)
     n_blocks = int(np.ceil(m / block))
@@ -226,7 +230,13 @@ def block_bootstrap_sharpe_ci(daily: np.ndarray, block: int = 7, n_boot: int = 5
         samp = np.concatenate([ext[s:s + block] for s in starts])[:m]
         sd = samp.std(ddof=1)
         out[b] = samp.mean() / sd * np.sqrt(365) if sd > 0 else np.nan
-    out = out[~np.isnan(out)]
+    return out[~np.isnan(out)]
+
+
+def block_bootstrap_sharpe_ci(daily: np.ndarray, block: int = 7, n_boot: int = 5000,
+                              seed: int = 0) -> tuple[float, float, float]:
+    """(5th, 50th, 95th) percentiles of `block_bootstrap_sharpe_dist`."""
+    out = block_bootstrap_sharpe_dist(daily, block=block, n_boot=n_boot, seed=seed)
     return (float(np.percentile(out, 5)), float(np.percentile(out, 50)),
             float(np.percentile(out, 95)))
 
